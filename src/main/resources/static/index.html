@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/sonar.css" />
 </head>
 <body>
+<div class="sweep" aria-hidden="true"></div>
 <main>
   <h1>Sonar <small id="version" class="version"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="$('prefs').showModal()">⚙</button></span></h1>
   <div class="sub">PipeWire mixer — assign apps to channels, set volume, choose output.</div>
@@ -73,6 +74,14 @@ if (new URLSearchParams(location.search).has('overlay')) {
   document.body.addEventListener('click', (e) => {
     if (e.target === document.body) window.webkit?.messageHandlers?.sonar?.postMessage('close');
   });
+  new ResizeObserver(fitSweep).observe(document.querySelector('main'));
+  window.addEventListener('resize', fitSweep);
+}
+// Overlay: the sweep covers just the mixer panel, not the whole screen.
+function fitSweep() {
+  const r = document.querySelector('main').getBoundingClientRect();
+  Object.assign(document.querySelector('.sweep').style,
+    { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
 }
 
 let devices = [];
@@ -146,15 +155,19 @@ function openObs() {
 }
 function showObsSide(show) {
   $('obsSide').hidden = !show;
+  fitSweep(); // the mixer panel shifts sideways to make room
   $('obsFrame').src = show ? '/obs.html' : 'about:blank'; // unloaded when hidden: stops polling OBS
   try { localStorage.setItem('obsSide', show ? '1' : ''); } catch (e) {}
 }
+
+const CHANNEL_ACCENTS = { sonar_game: '--game', sonar_chat: '--chat', sonar_media: '--media', sonar_aux: '--aux', sonar_mic: '--mic' };
+function channelAccentVar(sinkName) { return `var(${CHANNEL_ACCENTS[sinkName] || '--accent'})`; }
 
 function renderChannels() {
   // only meaningful while both default channels exist (looked up by sink name, like the server)
   $('chatmix').hidden = !['sonar_game', 'sonar_chat'].every(n => channelsCache.some(c => c.sinkName === n));
   $('channels').innerHTML = channelsCache.map((c, i) => `
-    <div class="card">
+    <div class="card" style="--ch:${channelAccentVar(c.sinkName)}">
       <header>
         <h2 class="${c.muted ? 'muted' : ''}">${esc(c.name)}</h2>
         <div>
@@ -242,6 +255,7 @@ function openEq(id) {
   eqChannel = id;
   const c = channelsCache.find(c => c.id === id);
   $('eqTitle').textContent = 'EQ — ' + c.name;
+  $('eq').style.setProperty('--ch', channelAccentVar(c.sinkName));
   $('eqBands').innerHTML = eqInfo.bands.map((f, i) => `
     <label><span id="eqv-${i}"></span>
       <input type="range" min="${-eqInfo.maxGain}" max="${eqInfo.maxGain}" step="0.5" value="${c.eq[i]}" oninput="bandChanged()" />
