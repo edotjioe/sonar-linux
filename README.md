@@ -95,6 +95,20 @@ sudo udevadm control --reload && sudo udevadm trigger
 
 Without the rule or the headset, Sonar runs normally and keeps looking every 5 s.
 
+## Install (desktop app)
+
+```sh
+install/install.sh
+```
+
+Sets Sonar up for your user: the backend as a systemd user service that starts at login (with a
+small-app JVM: 128 MiB heap, serial GC), the **Sonar** launcher, the **Meta+S** overlay hotkey,
+and the icon. It builds `target/sonar.jar` first if needed, and fills in the repo's location, so
+re-run it after moving the repo. The files it installs are templates in `install/`.
+
+Deploying a change: `systemctl --user stop sonar && ./mvnw package && systemctl --user start sonar`
+(stop first: replacing the jar under a running JVM breaks its shutdown cleanup).
+
 ## Run
 
 ```sh
