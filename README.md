@@ -6,6 +6,8 @@ mute, and routes each channel to a physical output — all in software, on top o
 
 Built as a **Java / Spring Boot** learning project.
 
+![Sonar demo: the mixer with its OBS side panel, in overlay mode](docs/demo.webp)
+
 ## Features (implemented)
 
 - **Channels** — Game, Chat, Media and Aux are created automatically as virtual devices
