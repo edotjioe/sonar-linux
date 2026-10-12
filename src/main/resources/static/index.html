@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sonar</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="stylesheet" href="/sonar.css" />
+</head>
+<body>
+<main>
+  <h1>Sonar <small id="version" class="version"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="$('prefs').showModal()">⚙</button></span></h1>
+  <div class="sub">PipeWire mixer — assign apps to channels, set volume, choose output.</div>
+
+  <div class="chatmix" id="chatmix" hidden title="Double-click to centre">
+    <b>ChatMix</b>
+    <span class="side" id="cmGame"></span>
+    <input type="range" id="cmSlider" min="-100" max="100" step="1" value="0" oninput="chatMixChanged()" ondblclick="this.value = 0; chatMixChanged()" />
+    <span class="side" id="cmChat"></span>
+  </div>
+  <div class="grid" id="channels"></div>
+  <div class="addbar">
+    <input type="text" id="newName" placeholder="New channel name" />
+    <button onclick="addChannel()">Add channel</button>
+  </div>
+
+  <div class="section">
+    <h2>Applications</h2>
+    <div id="apps"></div>
+  </div>
+</main>
+<!-- overlay only: OBS as a second panel beside the mixer (a real window would take focus from the game) -->
+<aside id="obsSide" hidden><iframe id="obsFrame" title="OBS"></iframe></aside>
+
+<dialog id="prefs">
+  <h2>Preferences</h2>
+  <fieldset>
+    <legend>Hotkey opens</legend>
+    <label><input type="radio" name="hotkeyOpens" value="overlay" /> Overlay (on top of games)</label>
+    <label><input type="radio" name="hotkeyOpens" value="window" /> Window</label>
+    <div class="hint">Change the key in System Settings → Shortcuts → Sonar Overlay.</div>
+  </fieldset>
+  <fieldset>
+    <legend>Applications</legend>
+    <label><input type="checkbox" name="autoRoute" /> Auto-assign apps to channels</label>
+    <div class="hint">Off: unassigned apps stay on the default output.</div>
+  </fieldset>
+  <fieldset>
+    <legend>Display</legend>
+    <label><input type="checkbox" name="meters" /> Level meters</label>
+    <div class="hint">Meters keep the mic in use while Sonar is open.</div>
+  </fieldset>
+  <footer><button onclick="$('prefs').close()">Close</button></footer>
+</dialog>
+
+
+<dialog id="eq" class="eq">
+  <h2 id="eqTitle">EQ</h2>
+  <div class="eqrow">
+    <select id="eqProfile" onchange="pickProfile(this.value)"></select>
+    <button onclick="saveProfile()">Save as…</button>
+    <button class="danger" id="eqDelete" onclick="deleteProfile()">Delete</button>
+  </div>
+  <div class="bands" id="eqBands"></div>
+  <footer><button onclick="$('eq').close()">Close</button></footer>
+</dialog>
+
+<script src="/common.js"></script>
+<script>
+if (new URLSearchParams(location.search).has('overlay')) {
+  document.documentElement.classList.add('overlay');
+  // clicking the dimmed backdrop closes the overlay (sonar-window.py listens for this message)
+  document.body.addEventListener('click', (e) => {
+    if (e.target === document.body) window.webkit?.messageHandlers?.sonar?.postMessage('close');
+  });
+}
+
+let devices = [];
+let prefs = { meters: true };
+let sources = [];
+let channelsCache = [];
+let eqInfo = { bands: [], maxGain: 12, profiles: [] };
+let eqChannel = null; // channel id the EQ dialog is editing
+let eqTimer;
+let cmTimer;
+let cmTouched = 0; // last local change: ignore the server's value briefly so it doesn't fight the drag
+
+async function loadDevices() {
+  devices = await (await fetch('/api/devices')).json();
+  sources = await (await fetch('/api/sources')).json();
+}
+
+async function loadChannels() {
+  channelsCache = await (await fetch('/api/channels')).json();
+  renderChannels();
+}
+
+async function loadApps() {
+  const apps = await (await fetch('/api/apps')).json();
+  const host = $('apps');
+  if (!apps.length) { host.innerHTML = '<div class="empty">No applications playing.</div>'; return; }
+  host.innerHTML = '<table><thead><tr><th>App</th><th>Binary</th><th>Now playing into</th><th>Channel</th></tr></thead><tbody></tbody></table>';
+  const tbody = host.querySelector('tbody');
+  for (const a of apps) {
+    const tr = document.createElement('tr');
+    const sel = document.createElement('select');
+    sel.innerHTML = `<option value="">Auto${a.autoChannel ? ' (' + esc(a.autoChannel) + ')' : ''}</option>` + channelsCache.filter(c => !c.mic)
+      .map(c => `<option value="${c.id}" ${a.channelId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+    sel.onchange = () => route(a, sel.value || null);
+    tr.innerHTML = `<td>${esc(a.appName)}</td><td class="chip">${esc(a.binary)}</td><td>${esc(a.sinkName)}</td>`;
+    tr.lastElementChild.appendChild(sel);
+    tbody.appendChild(tr);
+  }
+}
+
+// --- ChatMix: -100 all Game .. +100 all Chat; the label shows each side's share ---
+function renderChatMix() {
+  const v = +$('cmSlider').value;
+  $('cmGame').textContent = 'Game ' + (v > 0 ? 100 - v : 100) + '%';
+  $('cmChat').textContent = (v < 0 ? 100 + v : 100) + '% Chat';
+}
+function chatMixChanged() {
+  cmTouched = Date.now();
+  renderChatMix();
+  clearTimeout(cmTimer);
+  cmTimer = setTimeout(() => api('/api/chatmix', 'POST', { mix: +$('cmSlider').value }).catch(alert), 60);
+}
+
+// follow the hardware dial on the base station (it changes chatMix server-side)
+async function syncChatMix() {
+  const { chatMix } = await (await fetch('/api/preferences')).json();
+  if (Date.now() - cmTouched > 1500 && +$('cmSlider').value !== chatMix) {
+    $('cmSlider').value = chatMix;
+    renderChatMix();
+  }
+}
+
+// Window: sonar-window.py opens it as its own window (a browser: a popup; same name = reused).
+// Overlay: toggles a panel beside the mixer, so the game keeps focus; remembered for next time.
+function openObs() {
+  if (!document.documentElement.classList.contains('overlay')) {
+    window.open('/obs.html', 'sonar-obs', 'width=620,height=560');
+    return;
+  }
+  showObsSide($('obsSide').hidden);
+}
+function showObsSide(show) {
+  $('obsSide').hidden = !show;
+  $('obsFrame').src = show ? '/obs.html' : 'about:blank'; // unloaded when hidden: stops polling OBS
+  try { localStorage.setItem('obsSide', show ? '1' : ''); } catch (e) {}
+}
+
+function renderChannels() {
+  // only meaningful while both default channels exist (looked up by sink name, like the server)
+  $('chatmix').hidden = !['sonar_game', 'sonar_chat'].every(n => channelsCache.some(c => c.sinkName === n));
+  $('channels').innerHTML = channelsCache.map((c, i) => `
+    <div class="card">
+      <header>
+        <h2 class="${c.muted ? 'muted' : ''}">${esc(c.name)}</h2>
+        <div>
+          <button title="Move left" onclick="move(${i}, -1)" ${i === 0 ? 'disabled' : ''}>◀</button>
+          <button title="Move right" onclick="move(${i}, 1)" ${i === channelsCache.length - 1 ? 'disabled' : ''}>▶</button>
+          <button title="Rename" onclick="renameChannel(${c.id})">✎</button>
+          <button class="mute" title="Mute" onclick="toggleMute(${c.id}, ${!c.muted})">${c.muted ? '🔇' : '🔊'}</button>
+          ${c.mic ? '' : `<button class="danger" title="Delete" onclick="delChannel(${c.id})">✕</button>`}
+        </div>
+      </header>
+      <div class="row">
+        <input type="range" min="0" max="100" value="${c.volume}" oninput="this.nextElementSibling.textContent=this.value" onchange="setVolume(${c.id}, this.value)" />
+        <span class="val">${c.volume}</span>
+      </div>
+      <div class="meter"><div id="lvl-${c.id}"></div></div>
+      <div class="devlabel">${c.mic ? 'Input' : 'Output'}</div>
+      <select onchange="setDevice(${c.id}, this.value)">
+        ${(c.mic ? sources : devices).map(d => `<option value="${esc(d.name)}" ${c.deviceName === d.name ? 'selected' : ''}>${esc(d.description)}</option>`).join('')}
+      </select>
+      <button class="eqbtn" onclick="openEq(${c.id})">EQ: ${esc(profileName(c.eq))}</button>
+      <div class="devlabel">${c.active ? '● live' : '○ offline'} — ${esc(c.sinkName)}</div>
+    </div>`).join('');
+}
+
+async function loadPrefs() {
+  prefs = await (await fetch('/api/preferences')).json();
+  const d = $('prefs');
+  d.querySelector(`[name=hotkeyOpens][value=${prefs.hotkeyOpens}]`).checked = true;
+  d.querySelector('[name=autoRoute]').checked = prefs.autoRoute;
+  d.querySelector('[name=meters]').checked = prefs.meters;
+  document.documentElement.classList.toggle('no-meters', !prefs.meters);
+  $('cmSlider').value = prefs.chatMix;
+  renderChatMix();
+}
+
+async function savePrefs() {
+  const d = $('prefs');
+  await api('/api/preferences', 'PUT', {
+    hotkeyOpens: d.querySelector('[name=hotkeyOpens]:checked').value,
+    autoRoute: d.querySelector('[name=autoRoute]').checked,
+    meters: d.querySelector('[name=meters]').checked,
+  });
+  await loadPrefs();
+  loadApps();
+}
+
+async function loadLevels() {
+  const levels = await (await fetch('/api/levels')).json();
+  for (const [id, v] of Object.entries(levels)) {
+    const bar = $('lvl-' + id);
+    if (bar) bar.style.width = v + '%';
+  }
+}
+
+function route(app, channelId) {
+  api('/api/route', 'POST', { binary: app.binary, displayName: app.appName, channelId }).then(loadApps).catch(alert);
+}
+function setVolume(id, v) { api(`/api/channels/${id}/volume`, 'POST', { volume: +v }).catch(alert); }
+function toggleMute(id, muted) { api(`/api/channels/${id}/mute`, 'POST', { muted }).then(loadChannels).catch(alert); }
+function setDevice(id, deviceName) { api(`/api/channels/${id}/device`, 'POST', { deviceName }).then(loadChannels).catch(alert); }
+function renameChannel(id) {
+  const c = channelsCache.find(c => c.id === id);
+  const name = prompt('Rename channel', c.name)?.trim();
+  if (name && name !== c.name) api(`/api/channels/${id}/name`, 'POST', { name }).then(loadChannels).catch(alert);
+}
+function move(i, dir) {
+  const ids = channelsCache.map(c => c.id);
+  [ids[i], ids[i + dir]] = [ids[i + dir], ids[i]];
+  api('/api/channels/order', 'POST', ids).then(loadChannels).catch(alert);
+}
+function delChannel(id) { api(`/api/channels/${id}`, 'DELETE').then(loadChannels).catch(alert); }
+function addChannel() {
+  const name = $('newName').value.trim();
+  if (!name) return;
+  api('/api/channels', 'POST', { name }).then(() => { $('newName').value = ''; loadChannels(); }).catch(alert);
+}
+// --- EQ ---
+async function loadEq() { eqInfo = await (await fetch('/api/eq')).json(); }
+const sameCurve = (a, b) => a.length === b.length && a.every((g, i) => Math.abs(g - b[i]) < 0.05);
+function matchProfile(gains) { return eqInfo.profiles.find(p => sameCurve(p.gains, gains)); }
+function profileName(gains) { return matchProfile(gains)?.name ?? 'Custom'; }
+function fmtHz(f) { return f >= 1000 ? f / 1000 + 'k' : f; }
+
+function openEq(id) {
+  eqChannel = id;
+  const c = channelsCache.find(c => c.id === id);
+  $('eqTitle').textContent = 'EQ — ' + c.name;
+  $('eqBands').innerHTML = eqInfo.bands.map((f, i) => `
+    <label><span id="eqv-${i}"></span>
+      <input type="range" min="${-eqInfo.maxGain}" max="${eqInfo.maxGain}" step="0.5" value="${c.eq[i]}" oninput="bandChanged()" />
+      <span>${fmtHz(f)}</span></label>`).join('');
+  bandChanged(false);
+  $('eq').showModal();
+}
+function eqGains() { return [...$('eqBands').querySelectorAll('input')].map(i => +i.value); }
+function renderEqHeader() {
+  const gains = eqGains();
+  gains.forEach((g, i) => $('eqv-' + i).textContent = (g > 0 ? '+' : '') + g);
+  const match = matchProfile(gains);
+  $('eqProfile').innerHTML = (match ? '' : '<option value="" selected>Custom</option>') + eqInfo.profiles.map(p =>
+    `<option value="${p.id}" ${p === match ? 'selected' : ''}>${esc(p.name)}${p.builtIn ? '' : ' ★'}</option>`).join('');
+  $('eqDelete').disabled = !match || match.builtIn;
+}
+// send at most every 60 ms while dragging: each send is a live pw-cli set-param
+function bandChanged(send = true) {
+  renderEqHeader();
+  if (!send) return;
+  clearTimeout(eqTimer);
+  eqTimer = setTimeout(() => {
+    const gains = eqGains();
+    api(`/api/channels/${eqChannel}/eq`, 'POST', { gains }).catch(alert);
+    channelsCache.find(c => c.id === eqChannel).eq = gains;
+    renderChannels();
+  }, 60);
+}
+function pickProfile(id) {
+  const p = eqInfo.profiles.find(p => p.id === +id);
+  if (!p) return;
+  $('eqBands').querySelectorAll('input').forEach((input, i) => input.value = p.gains[i]);
+  bandChanged();
+}
+async function saveProfile() {
+  const name = prompt('Profile name', '')?.trim();
+  if (!name) return;
+  try {
+    await api('/api/eq/profiles', 'POST', { name, gains: eqGains() });
+    await loadEq();
+    renderEqHeader();
+    renderChannels();
+  } catch (e) { alert(e.message); }
+}
+async function deleteProfile() {
+  const p = matchProfile(eqGains());
+  if (!p || p.builtIn || !confirm(`Delete profile "${p.name}"?`)) return;
+  try {
+    await api(`/api/eq/profiles/${p.id}`, 'DELETE');
+    await loadEq();
+    renderEqHeader();
+    renderChannels();
+  } catch (e) { alert(e.message); }
+}
+
+$('prefs').addEventListener('change', () => savePrefs().catch(alert));
+if (document.documentElement.classList.contains('overlay')) {
+  try { if (localStorage.getItem('obsSide')) showObsSide(true); } catch (e) {}
+}
+
+(async () => {
+  fetch('/api/version').then(r => r.json()).then(v => $('version').textContent = 'v' + v.version).catch(() => {});
+  await loadPrefs();
+  await loadDevices();
+  await loadEq();
+  await loadChannels();
+  await loadApps();
+  setInterval(loadApps, 2000);
+  setInterval(() => $('chatmix').hidden || syncChatMix().catch(() => {}), 1000);
+  // don't re-render under the user while they drag EQ sliders
+  setInterval(() => $('eq').open || loadChannels(), 5000);
+  setInterval(() => prefs.meters && loadLevels().catch(() => {}), 100);
+})();
+</script>
+</body>
+</html>
