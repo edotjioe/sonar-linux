@@ -104,8 +104,14 @@ async function loadChannels() {
   renderChannels();
 }
 
+let appsLast;
 async function loadApps() {
-  const apps = await (await fetch('/api/apps')).json();
+  const text = await (await fetch('/api/apps')).text();
+  // rebuild only on change (the dropdowns list the channels too), or an open dropdown closes under the user
+  const key = text + JSON.stringify(channelsCache);
+  if (key === appsLast) return;
+  appsLast = key;
+  const apps = JSON.parse(text);
   const host = $('apps');
   if (!apps.length) { host.innerHTML = '<div class="empty">No applications playing.</div>'; return; }
   host.innerHTML = '<table><thead><tr><th>App</th><th>Binary</th><th>Now playing into</th><th>Channel</th></tr></thead><tbody></tbody></table>';
