@@ -43,7 +43,7 @@ def web_view():
 
 class Sonar(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id='dev.edo.sonar', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        super().__init__(application_id='dev.sonar', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.main = self.overlay = self.overlay_view = self.obs = None
 
     def do_command_line(self, cmdline):

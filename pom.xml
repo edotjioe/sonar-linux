@@ -8,7 +8,7 @@
 		<version>4.1.1</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-	<groupId>dev.edo</groupId>
+	<groupId>dev.sonar</groupId>
 	<artifactId>sonar</artifactId>
 	<version>0.0.1</version>
 	<name>sonar</name>

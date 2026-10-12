@@ -11,7 +11,7 @@ UNITS=$HOME/.config/systemd/user
 mkdir -p "$UNITS" "$APPS" "$HOME/.local/share/icons/hicolor/256x256/apps"
 # the templates say @REPO@ wherever the repo's path goes
 sed "s#@REPO@#$REPO#g" "$REPO/install/sonar.service" > "$UNITS/sonar.service"
-for f in dev.edo.sonar.desktop dev.edo.sonar.overlay.desktop; do
+for f in dev.sonar.desktop dev.sonar.overlay.desktop; do
 	sed "s#@REPO@#$REPO#g" "$REPO/install/$f" > "$APPS/$f"
 done
 cp "$REPO/sonar.png" "$HOME/.local/share/icons/hicolor/256x256/apps/sonar.png"

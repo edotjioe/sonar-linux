@@ -135,7 +135,7 @@ The H2 console (to inspect persisted state) is at `http://localhost:8080/h2-cons
 ## Project layout
 
 ```
-src/main/java/dev/edo/sonar/
+src/main/java/dev/sonar/
   pipewire/       PipeWireService (all pactl calls + parsing), PipeWireModels
   domain/         Channel, AppAssignment, Preferences, EqProfile (bands + presets)
   repo/           Spring Data repositories
