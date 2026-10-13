@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,6 +90,24 @@ public class PipeWireService {
 		return parseLong(r.out());
 	}
 
+	/**
+	 * The virtual mic: a source apps can record from, fed by the mic EQ process while it runs.
+	 * Separate from that process so it stays selectable while the real mic is off.
+	 */
+	public long loadVirtualSource(String name, String description) {
+		Result r = run("pactl", "load-module", "module-null-sink", "sink_name=" + name,
+				"media.class=Audio/Source/Virtual", "channel_map=mono", "sink_properties=device.description=" + description);
+		return parseLong(r.out());
+	}
+
+	/** Recording streams on source `name` (apps using the virtual mic, and our own level meter). */
+	public long sourceConsumers(String name) {
+		String index = indexToName("sources").entrySet().stream().filter(e -> e.getValue().equals(name))
+				.map(e -> e.getKey().toString()).findFirst().orElse(null);
+		return run("pactl", "list", "short", "source-outputs").out().lines()
+				.filter(l -> l.split("\t").length > 1 && l.split("\t")[1].equals(index)).count();
+	}
+
 	public void unloadModule(long id) {
 		run("pactl", "unload-module", Long.toString(id));
 	}
@@ -120,11 +139,12 @@ public class PipeWireService {
 	//
 	// pactl can't load module-filter-chain, and `pw-cli load-module` unloads it when pw-cli
 	// exits, so each EQ is its own long-lived process. Output channel: reads the null-sink's
-	// monitor, plays into the physical device. Mic: reads the physical mic and is itself the
-	// virtual mic source. Band gains change live with `pw-cli set-param`, no restart.
+	// monitor, plays into the physical device. Mic: reads the physical mic, plays into the virtual
+	// mic source; it only runs while something records from that. Band gains change live with
+	// `pw-cli set-param`, no restart.
 	//
-	// ponytail: a dead EQ process isn't respawned (it only dies if PipeWire itself restarts,
-	// which takes the null-sinks down too); restart Sonar to recover.
+	// An EQ process only dies when PipeWire itself restarts, which takes the null-sinks down too:
+	// Bootstrapper notices the missing sinks and rebuilds everything.
 
 	/** Per-user runtime dir (/run/user/<uid>, 0700): /tmp is shared, so another user's sonar-eq would block ours. */
 	private static final Path EQ_DIR = Path.of(System.getenv().getOrDefault("XDG_RUNTIME_DIR",
@@ -132,24 +152,44 @@ public class PipeWireService {
 
 	private final Map<String, Process> eqProcesses = new ConcurrentHashMap<>();
 
-	/** (Re)start the EQ for channel node `name`, routed to/from `device`. Mic: waits until the source exists. */
-	public void startEq(String name, String description, String device, double[] gains, boolean mic) {
+	/**
+	 * (Re)start the EQ for channel node `name`, routed to/from `device`.
+	 * denoise: put rnnoise in front of the EQ (mic only); skipped when the plugin isn't installed.
+	 */
+	public void startEq(String name, String description, String device, double[] gains, boolean mic, boolean denoise) {
 		stopEq(name);
+		Path plugin = mic && denoise ? rnnoisePlugin() : null;
 		try {
 			Files.createDirectories(EQ_DIR);
 			Path conf = EQ_DIR.resolve(name + ".conf");
-			Files.writeString(conf, eqConf(name, description, device, gains, mic));
+			Files.writeString(conf, eqConf(name, description, device, gains, mic, plugin));
 			eqProcesses.put(name, new ProcessBuilder("pipewire", "-c", conf.toString())
 					.redirectErrorStream(true).redirectOutput(Redirect.DISCARD).start());
 		} catch (IOException e) {
 			throw new UncheckedIOException("Can't start EQ for " + name, e);
 		}
 		if (mic) {
-			// volume/mute are set on the source right after this; it must exist by then
-			for (int i = 0; i < 30 && !indexToName("sources").containsValue(name); i++) {
+			// WirePlumber won't link a stream into a virtual source (it falls back to the default
+			// *output*, i.e. your own headphones), so the chain doesn't autoconnect and we link it here
+			String out = name + "_eq_out";
+			for (int i = 0; i < 30 && !run("pw-link", "-o").out().contains(out + ":"); i++) {
 				sleep(100);
 			}
+			run("pw-link", out, name);
 		}
+	}
+
+	private static void sleep(long ms) {
+		try {
+			Thread.sleep(ms);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+	}
+
+	public boolean isEqRunning(String name) {
+		Process p = eqProcesses.get(name);
+		return p != null && p.isAlive();
 	}
 
 	/** Live gain change on a running EQ; gains[i] is band b{i}. */
@@ -177,10 +217,26 @@ public class PipeWireService {
 				.forEach(PipeWireService::awaitExit);
 	}
 
-	/** filter-chain config: a chain of peaking biquads, one per band (SPA-JSON). */
-	static String eqConf(String name, String description, String device, double[] gains, boolean mic) {
+	/** rnnoise's LADSPA plugin (package noise-suppression-for-voice), or null when it isn't installed. */
+	public Path rnnoisePlugin() {
+		return Stream.of("/usr/lib/ladspa", "/usr/lib64/ladspa", "/usr/local/lib/ladspa",
+				System.getProperty("user.home") + "/.local/lib/ladspa")
+				.map(dir -> Path.of(dir, "librnnoise_ladspa.so")).filter(Files::isReadable).findFirst().orElse(null);
+	}
+
+	/**
+	 * filter-chain config: a chain of peaking biquads, one per band (SPA-JSON).
+	 * rnnoise: the noise-suppression plugin to put in front of the biquads, or null for none.
+	 */
+	static String eqConf(String name, String description, String device, double[] gains, boolean mic, Path rnnoise) {
 		StringBuilder nodes = new StringBuilder();
 		StringBuilder links = new StringBuilder();
+		if (rnnoise != null) {
+			// rnnoise wants 48 kHz mono: the mic chain is mono, and PipeWire's default graph rate is 48 kHz
+			nodes.append("          { type = ladspa name = ns plugin = ").append(quote(rnnoise.toString()))
+					.append(" label = noise_suppressor_mono control = { \"VAD Threshold (%)\" = 50.0 } }\n");
+			links.append("          { output = \"ns:Output\" input = \"b0:In\" }\n");
+		}
 		for (int i = 0; i < gains.length; i++) {
 			nodes.append("          { type = builtin name = b").append(i).append(" label = bq_peaking control = { \"Freq\" = ")
 					.append(EqProfile.BANDS[i]).append(".0 \"Q\" = 1.41 \"Gain\" = ").append(gains[i]).append(" } }\n");
@@ -192,9 +248,8 @@ public class PipeWireService {
 				? "node.name = " + quote(name + "_eq_in") + " target.object = " + quote(device) + " node.passive = true"
 				: "node.name = " + quote(name + "_eq_in") + " target.object = " + quote(name)
 						+ " stream.capture.sink = true node.passive = true";
-		String playback = mic
-				? "node.name = " + quote(name) + " media.class = Audio/Source node.description = " + quote(description)
-				: "node.name = " + quote(name + "_eq_out") + " target.object = " + quote(device);
+		String playback = "node.name = " + quote(name + "_eq_out")
+				+ (mic ? " node.autoconnect = false" : " target.object = " + quote(device)); // mic: linked by startEq
 		return """
 				context.spa-libs = { audio.convert.* = audioconvert/libspa-audioconvert support.* = support/libspa-support }
 				context.modules = [
@@ -237,15 +292,12 @@ public class PipeWireService {
 		}
 	}
 
-	private static void sleep(long ms) {
-		try {
-			Thread.sleep(ms);
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-		}
-	}
-
 	// --- sinks / routing / volume ---
+
+	/** False while PipeWire (pipewire-pulse) is down or restarting. */
+	public boolean isUp() {
+		return run("pactl", "info").exit() == 0;
+	}
 
 	/** index -> name from `pactl list short <kind>`, kind = "sinks" or "sources". */
 	public Map<Integer, String> indexToName(String kind) {

@@ -8,8 +8,8 @@ import jakarta.persistence.Id;
 
 /**
  * A mixer channel. Output (Game/Chat/Media/Aux): a null-sink, plus an EQ process that plays
- * its monitor into a physical device. Mic: just the EQ process, which reads a physical mic and
- * is itself the virtual mic source (no module: nullSinkModule stays -1).
+ * its monitor into a physical device. Mic: a virtual source (also a null-sink module), plus an EQ
+ * process that reads a physical mic into it, running only while something records from it.
  */
 @Entity
 public class Channel {
@@ -41,6 +41,18 @@ public class Channel {
 	/** Input channel (virtual mic) instead of an output channel. */
 	@Column(columnDefinition = "boolean default false")
 	private boolean mic = false;
+
+	/** Mic only: rnnoise noise suppression in front of the EQ. */
+	@Column(columnDefinition = "boolean default false")
+	private boolean noiseSuppression = false;
+
+	public boolean isNoiseSuppression() {
+		return noiseSuppression;
+	}
+
+	public void setNoiseSuppression(boolean noiseSuppression) {
+		this.noiseSuppression = noiseSuppression;
+	}
 
 	public Long getId() {
 		return id;

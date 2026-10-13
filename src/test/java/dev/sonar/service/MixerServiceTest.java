@@ -1,7 +1,9 @@
 package dev.sonar.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -12,6 +14,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -108,7 +111,7 @@ class MixerServiceTest {
 		assertEquals("sonar_extra", c.getSinkName());
 		assertEquals(6, c.getPosition());
 		assertEquals(10L, c.getNullSinkModule());
-		verify(pw).startEq(eq("sonar_extra"), eq("Extra"), eq("out"), any(), eq(false));
+		verify(pw).startEq(eq("sonar_extra"), eq("Extra"), eq("out"), any(), eq(false), eq(false));
 	}
 
 	@Test
@@ -327,24 +330,36 @@ class MixerServiceTest {
 
 		service.setDevice(1L, "hdmi");
 
-		verify(pw).startEq(eq("sonar_game"), eq("Game"), eq("hdmi"), any(), eq(false));
+		verify(pw).startEq(eq("sonar_game"), eq("Game"), eq("hdmi"), any(), eq(false), eq(false));
 		verify(pw, never()).setVolume(anyString(), anyInt(), anyBoolean());
 	}
 
 	@Test
-	void setDeviceOnMicChannelForgetsAndSetsVolumeMute() {
+	void setDeviceOnMicChannelSkipsStartEqWhenNotRunning() {
 		Channel c = channel(1L);
 		c.setSinkName("sonar_mic");
 		c.setName("Mic");
 		c.setMic(true);
 		when(channels.findById(1L)).thenReturn(Optional.of(c));
+		when(pw.isEqRunning("sonar_mic")).thenReturn(false);
 
 		service.setDevice(1L, "alsa_in");
 
-		verify(meters).forget(c);
-		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true));
-		verify(pw).setVolume("sonar_mic", 100, true);
-		verify(pw).setMute("sonar_mic", false, true);
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void setDeviceOnMicChannelStartsEqWhenRunning() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_mic");
+		c.setName("Mic");
+		c.setMic(true);
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+		when(pw.isEqRunning("sonar_mic")).thenReturn(true);
+
+		service.setDevice(1L, "alsa_in");
+
+		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true), eq(false));
 	}
 
 	@Test
@@ -360,5 +375,210 @@ class MixerServiceTest {
 	void setMuteUnknownChannelThrows() {
 		when(channels.findById(99L)).thenReturn(Optional.empty());
 		assertThrows(IllegalArgumentException.class, () -> service.setMute(99L, true));
+	}
+
+	@Test
+	void setNoiseSuppressionOnNonMicChannelThrows() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		assertThrows(IllegalArgumentException.class, () -> service.setNoiseSuppression(1L, true));
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void enableNoiseSuppressionWithoutPluginThrows() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_mic");
+		c.setMic(true);
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+		when(pw.rnnoisePlugin()).thenReturn(null);
+
+		assertThrows(IllegalStateException.class, () -> service.setNoiseSuppression(1L, true));
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void enableNoiseSuppressionStartsDenoisedEqAndSaves() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_mic");
+		c.setMic(true);
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+		when(pw.rnnoisePlugin()).thenReturn(Path.of("/usr/lib/ladspa/librnnoise_ladspa.so"));
+		when(pw.isEqRunning("sonar_mic")).thenReturn(true);
+
+		service.setNoiseSuppression(1L, true);
+
+		assertTrue(c.isNoiseSuppression());
+		verify(pw).startEq(eq("sonar_mic"), any(), any(), any(), eq(true), eq(true));
+		verify(channels).save(c);
+	}
+
+	@Test
+	void disableNoiseSuppressionWorksWithoutPlugin() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_mic");
+		c.setMic(true);
+		c.setNoiseSuppression(true);
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+		when(pw.isEqRunning("sonar_mic")).thenReturn(true);
+
+		service.setNoiseSuppression(1L, false);
+
+		assertFalse(c.isNoiseSuppression());
+		verify(pw).startEq(eq("sonar_mic"), any(), any(), any(), eq(true), eq(false));
+		verify(channels).save(c);
+	}
+
+	@Test
+	void applyChannelOnMicLoadsVirtualSourceAndSkipsStartEq() {
+		Channel c = channel(1L);
+		c.setMic(true);
+		c.setSinkName("sonar_mic");
+		c.setName("Mic");
+		c.setDeviceName("alsa_in");
+		c.setVolume(70);
+		c.setMuted(true);
+		when(pw.loadVirtualSource("sonar_mic", "Mic")).thenReturn(42L);
+
+		service.applyChannel(c);
+
+		assertEquals(42L, c.getNullSinkModule());
+		verify(pw).loadVirtualSource("sonar_mic", "Mic");
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw).setVolume("sonar_mic", 70, true);
+		verify(pw).setMute("sonar_mic", true, true);
+	}
+
+	@Test
+	void syncMicStartsEqWhenConsumersAndNotRunning() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		mic.setName("Mic");
+		mic.setDeviceName("alsa_in");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+		when(pw.sourceConsumers("sonar_mic")).thenReturn(1L);
+		when(pw.isEqRunning("sonar_mic")).thenReturn(false);
+
+		service.syncMic();
+
+		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true), eq(false));
+		verify(pw, never()).stopEq("sonar_mic");
+	}
+
+	@Test
+	void syncMicDoesNothingWhenConsumersAndRunning() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+		when(pw.sourceConsumers("sonar_mic")).thenReturn(1L);
+		when(pw.isEqRunning("sonar_mic")).thenReturn(true);
+
+		service.syncMic();
+
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).stopEq("sonar_mic");
+	}
+
+	@Test
+	void syncMicStopsEqWhenNoConsumersAndNeverUsed() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+		when(pw.sourceConsumers("sonar_mic")).thenReturn(0L);
+		when(pw.isEqRunning("sonar_mic")).thenReturn(true);
+
+		service.syncMic();
+
+		verify(pw).stopEq("sonar_mic");
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void syncMicDoesNotStopRecentlyUsedMic() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+		when(pw.sourceConsumers("sonar_mic")).thenReturn(1L, 0L);
+		when(pw.isEqRunning("sonar_mic")).thenReturn(true);
+
+		service.syncMic();
+		service.syncMic();
+
+		verify(pw, never()).stopEq("sonar_mic");
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void syncMicSkipsOutputChannels() {
+		Channel out = channel(1L);
+		out.setSinkName("sonar_game");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(out));
+
+		service.syncMic();
+
+		verify(pw, never()).sourceConsumers(anyString());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).stopEq(anyString());
+	}
+
+	@Test
+	void setMicMutedMutesOnlyUnmutedMic() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		Channel out = channel(2L);
+		out.setSinkName("sonar_game");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic, out));
+		when(channels.findById(1L)).thenReturn(Optional.of(mic));
+
+		service.setMicMuted(true);
+
+		verify(pw).setMute("sonar_mic", true, true);
+		verify(pw, never()).setMute(eq("sonar_game"), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void setMicMutedSkipsAlreadyMutedMic() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		mic.setMuted(true);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+
+		service.setMicMuted(true);
+
+		verify(pw, never()).setMute(anyString(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void setMicMutedUnmutesMutedMic() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		mic.setMuted(true);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+		when(channels.findById(1L)).thenReturn(Optional.of(mic));
+
+		service.setMicMuted(false);
+
+		verify(pw).setMute("sonar_mic", false, true);
+	}
+
+	@Test
+	void setMicMutedIgnoresOutputChannels() {
+		Channel out = channel(1L);
+		out.setSinkName("sonar_game");
+		out.setMuted(true);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(out));
+
+		service.setMicMuted(false);
+
+		verify(pw, never()).setMute(anyString(), anyBoolean(), anyBoolean());
 	}
 }

@@ -3,7 +3,10 @@ package dev.sonar.service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import dev.sonar.domain.AppAssignment;
@@ -156,8 +159,28 @@ public class MixerService {
 	public Channel setDevice(long id, String deviceName) {
 		Channel c = require(id);
 		c.setDeviceName(deviceName);
-		startEq(c);
+		restartEq(c);
 		return channels.save(c);
+	}
+
+	/** Mic only: switch rnnoise on/off. Restarts the mic's EQ process, so the virtual mic blips for a moment. */
+	public Channel setNoiseSuppression(long id, boolean enabled) {
+		Channel c = require(id);
+		if (!c.isMic()) {
+			throw new IllegalArgumentException("Noise suppression is only for the mic channel");
+		}
+		if (enabled && pw.rnnoisePlugin() == null) {
+			throw new IllegalStateException("Noise suppression needs the rnnoise plugin: install noise-suppression-for-voice"
+					+ " (or put librnnoise_ladspa.so in ~/.local/lib/ladspa)");
+		}
+		c.setNoiseSuppression(enabled);
+		restartEq(c);
+		return channels.save(c);
+	}
+
+	/** The headset's own mute button (via the base station): mirror it onto the mic channel. */
+	public void setMicMuted(boolean muted) {
+		listChannels().stream().filter(c -> c.isMic() && c.isMuted() != muted).forEach(c -> setMute(c.getId(), muted));
 	}
 
 	/** Move the ChatMix dial and re-apply the Game/Chat volumes it scales. */
@@ -239,24 +262,53 @@ public class MixerService {
 			device = c.isMic() ? pw.defaultSource() : pw.defaultSink();
 		}
 		c.setDeviceName(device);
-		c.setNullSinkModule(c.isMic() ? -1 : pw.loadNullSink(c.getSinkName(), c.getName()));
-		startEq(c);
-		if (!c.isMic()) { // startEq already did the mic's
-			pw.setVolume(c.getSinkName(), effectiveVolume(c), false);
-			pw.setMute(c.getSinkName(), c.isMuted(), false);
+		c.setNullSinkModule(c.isMic()
+				? pw.loadVirtualSource(c.getSinkName(), c.getName())
+				: pw.loadNullSink(c.getSinkName(), c.getName()));
+		if (!c.isMic()) {
+			startEq(c); // the mic's runs on demand: see syncMic
 		}
+		pw.setVolume(c.getSinkName(), effectiveVolume(c), c.isMic());
+		pw.setMute(c.getSinkName(), c.isMuted(), c.isMic());
 		return channels.save(c);
 	}
 
-	/** (Re)start the channel's EQ process. For the mic it *is* the source, so volume/mute go on the new node. */
 	private void startEq(Channel c) {
-		if (c.isMic()) {
-			meters.forget(c); // or its parec gets moved to the default mic when the old source goes away
+		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), c.getEq(), c.isMic(), c.isNoiseSuppression());
+	}
+
+	/** After a setting the EQ process is built from changed: restart it, unless it's the mic's and that's off. */
+	private void restartEq(Channel c) {
+		if (!c.isMic() || pw.isEqRunning(c.getSinkName())) {
+			startEq(c);
 		}
-		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), c.getEq(), c.isMic());
-		if (c.isMic()) {
-			pw.setVolume(c.getSinkName(), c.getVolume(), true);
-			pw.setMute(c.getSinkName(), c.isMuted(), true);
+	}
+
+	/** Mic sink name -> when something last recorded from it. */
+	private final Map<String, Long> micLastUsed = new ConcurrentHashMap<>();
+
+	/**
+	 * Run the mic chain only while something records from the virtual mic (an app, or the mixer's level
+	 * meter), so the real mic, and the desktop's "mic in use" indicator, are off the rest of the time.
+	 * It stops 5 s after the last user: apps often close and reopen the mic, e.g. when joining a call.
+	 */
+	@Scheduled(fixedDelay = 1000)
+	public void syncMic() {
+		long now = System.currentTimeMillis();
+		for (Channel c : listChannels()) {
+			if (!c.isMic()) {
+				continue;
+			}
+			String sink = c.getSinkName();
+			boolean running = pw.isEqRunning(sink);
+			if (pw.sourceConsumers(sink) > 0) {
+				micLastUsed.put(sink, now);
+				if (!running) {
+					startEq(c);
+				}
+			} else if (running && now - micLastUsed.getOrDefault(sink, 0L) > 5000) {
+				pw.stopEq(sink);
+			}
 		}
 	}
 

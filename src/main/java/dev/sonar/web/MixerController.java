@@ -27,6 +27,7 @@ import dev.sonar.repo.AppAssignmentRepository;
 import dev.sonar.repo.EqProfileRepository;
 import dev.sonar.repo.PreferencesRepository;
 import dev.sonar.service.AppClassifier;
+import dev.sonar.service.BaseStation;
 import dev.sonar.service.LevelMeter;
 import dev.sonar.service.MixerService;
 
@@ -43,10 +44,11 @@ public class MixerController {
 	private final PreferencesRepository preferences;
 	private final EqProfileRepository profiles;
 	private final ObjectProvider<BuildProperties> build;
+	private final BaseStation base;
 
 	public MixerController(MixerService mixer, PipeWireService pw, AppAssignmentRepository assignments,
 			LevelMeter meters, AppClassifier classifier, PreferencesRepository preferences,
-			EqProfileRepository profiles, ObjectProvider<BuildProperties> build) {
+			EqProfileRepository profiles, ObjectProvider<BuildProperties> build, BaseStation base) {
 		this.mixer = mixer;
 		this.pw = pw;
 		this.assignments = assignments;
@@ -55,10 +57,12 @@ public class MixerController {
 		this.preferences = preferences;
 		this.profiles = profiles;
 		this.build = build;
+		this.base = base;
 	}
 
 	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted,
-			String deviceName, String deviceDescription, int position, boolean active, boolean mic, double[] eq) {
+			String deviceName, String deviceDescription, int position, boolean active, boolean mic, double[] eq,
+			boolean noiseSuppression) {
 	}
 
 	public record EqView(int[] bands, double maxGain, List<EqProfile> profiles) {
@@ -84,7 +88,8 @@ public class MixerController {
 		return mixer.listChannels().stream().map(c -> new ChannelView(
 				c.getId(), c.getName(), c.getSinkName(), c.getVolume(), c.isMuted(),
 				c.getDeviceName(), desc.getOrDefault(c.getDeviceName(), c.getDeviceName()),
-				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq())).toList();
+				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(),
+				c.isNoiseSuppression())).toList();
 	}
 
 	/** channel id -> peak level 0..100 (-60..0 dB). The UI polls this ~10x/s while open. */
@@ -127,6 +132,11 @@ public class MixerController {
 	@PostMapping("/channels/{id}/device")
 	public void device(@PathVariable long id, @RequestBody Map<String, String> body) {
 		mixer.setDevice(id, required(body, "deviceName"));
+	}
+
+	@PostMapping("/channels/{id}/noise")
+	public void noise(@PathVariable long id, @RequestBody Map<String, Boolean> body) {
+		mixer.setNoiseSuppression(id, required(body, "enabled"));
 	}
 
 	@PostMapping("/channels/{id}/eq")
@@ -195,6 +205,12 @@ public class MixerController {
 		BuildProperties build = this.build.getIfAvailable();
 		return build == null ? Map.of("version", "dev")
 				: Map.of("version", build.getVersion(), "built", String.valueOf(build.getTime()));
+	}
+
+	/** Arctis Nova Pro Wireless headset status from its base station (all unknown without one). */
+	@GetMapping("/headset")
+	public BaseStation.Headset headset() {
+		return base.headset();
 	}
 
 	@GetMapping("/devices")

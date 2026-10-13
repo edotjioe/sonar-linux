@@ -28,7 +28,8 @@ Built as a **Java / Spring Boot** learning project.
 - **Persistence & recovery** — channels, volumes and assignments survive restart; orphaned
   modules from a crash are cleaned up on the next boot.
 - **Mic channel** — a virtual mic (`sonar_mic`) over the physical mic of your choice, with its
-  own volume/mute and EQ.
+  own volume/mute and EQ. The real mic is only opened while an app records from `sonar_mic`
+  (and for 5 s after), so the desktop's "mic in use" indicator stays off otherwise.
 - **Auto-routing** — unassigned apps go to the channel they most likely belong in (Steam games →
   Game, chat apps → Chat, players/browsers → Media), guessed from Steam's env, the stream's
   `media.role` and the app's `.desktop` categories. Can be turned off in Preferences.
@@ -97,7 +98,7 @@ client. Port and password are read from OBS's own config
 Sonar; just enable the server once in OBS: **Tools → WebSocket Server Settings → Enable**.
 When OBS isn't running the OBS section says so and the rest of Sonar is unaffected.
 
-### Hardware ChatMix dial (Arctis Nova Pro Wireless)
+### Arctis Nova Pro Wireless base station (ChatMix dial, battery, mic mute)
 
 The base station only reports its dial when told to (that's what SteelSeries' Windows Sonar does).
 Sonar sends that command over the base's vendor HID interface (`/dev/hidraw*`, interface 4) and
@@ -108,6 +109,10 @@ The hidraw node is root-only by default; this udev rule gives the logged-in user
 sudo cp udev/70-steelseries-arctis.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
+
+Over the same interface Sonar reads the headset's battery and the spare battery charging in the
+base (shown next to the version, polled every 30 s), and mirrors the headset's mic-mute button
+onto the Mic channel. Status layout from [HeadsetControl](https://github.com/Sapd/HeadsetControl).
 
 Without the rule or the headset, Sonar runs normally and keeps looking every 5 s.
 

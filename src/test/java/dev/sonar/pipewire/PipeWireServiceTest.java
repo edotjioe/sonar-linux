@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
+
 import org.junit.jupiter.api.Test;
 
 class PipeWireServiceTest {
@@ -18,7 +20,7 @@ class PipeWireServiceTest {
 		double[] gains = new double[10];
 		gains[0] = 3.5;
 
-		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", gains, false);
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", gains, false, null);
 
 		assertTrue(conf.contains("target.object = \"sonar_game\" stream.capture.sink = true"));
 		assertTrue(conf.contains("node.name = \"sonar_game_eq_out\" target.object = \"alsa_out\""));
@@ -31,13 +33,15 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfMic() {
-		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", new double[10], true);
+		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", new double[10], true, null);
 
-		assertTrue(conf.contains("node.name = \"sonar_mic\" media.class = Audio/Source node.description = \"Mic\""));
-		assertTrue(conf.contains("target.object = \"alsa_in\" node.passive = true"));
+		assertTrue(conf.contains("node.name = \"sonar_mic_eq_in\" target.object = \"alsa_in\" node.passive = true"));
+		// linked into the virtual mic by startEq: WirePlumber would send it to the default output instead
+		assertTrue(conf.contains("node.name = \"sonar_mic_eq_out\" node.autoconnect = false"));
 		assertTrue(conf.contains("audio.channels = 1"));
 		assertTrue(conf.contains("MONO"));
 		assertFalse(conf.contains("stream.capture.sink"));
+		assertFalse(conf.contains("media.class = Audio/Source"));
 	}
 
 	@Test
@@ -54,9 +58,29 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfEscapesDescription() {
-		String conf = PipeWireService.eqConf("sonar_game", "x\" } evil = { ", "alsa_out", new double[10], false);
+		String conf = PipeWireService.eqConf("sonar_game", "x\" } evil = { ", "alsa_out", new double[10], false, null);
 
 		assertTrue(conf.contains("x\\\" } evil"));
 		assertFalse(conf.contains("x\" } evil"));
+	}
+
+	@Test
+	void eqConfMicWithRnnoiseAddsNoiseSuppressor() {
+		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", new double[10], true,
+				Path.of("/usr/lib/ladspa/librnnoise_ladspa.so"));
+
+		assertTrue(conf.contains("ladspa"));
+		assertTrue(conf.contains("ns:Output"));
+		assertTrue(conf.contains("noise_suppressor_mono"));
+		assertTrue(conf.contains("plugin = \"/usr/lib/ladspa/librnnoise_ladspa.so\""));
+		assertTrue(conf.contains("{ output = \"ns:Output\" input = \"b0:In\" }"));
+	}
+
+	@Test
+	void eqConfMicWithoutRnnoiseHasNoSuppressor() {
+		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", new double[10], true, null);
+
+		assertFalse(conf.contains("ladspa"));
+		assertFalse(conf.contains("ns:Output"));
 	}
 }
