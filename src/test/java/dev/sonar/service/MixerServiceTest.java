@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -321,6 +322,61 @@ class MixerServiceTest {
 		service.deleteProfile(1L);
 
 		verify(profiles).delete(custom);
+	}
+
+	@Test
+	void isDeletableFalseForRenamedGameChannel() {
+		Channel c = channel(1L);
+		c.setName("Games");
+		c.setSinkName("sonar_game");
+
+		assertFalse(service.isDeletable(c));
+	}
+
+	@Test
+	void isDeletableFalseForMicChannel() {
+		Channel c = channel(1L);
+		c.setMic(true);
+		c.setSinkName("sonar_mic");
+
+		assertFalse(service.isDeletable(c));
+	}
+
+	@Test
+	void isDeletableTrueForUserChannel() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_extra");
+
+		assertTrue(service.isDeletable(c));
+	}
+
+	@Test
+	void deleteChannelOnGameChannelThrows() {
+		Channel game = channel(1L);
+		game.setName("Game");
+		game.setSinkName("sonar_game");
+		when(channels.findById(1L)).thenReturn(Optional.of(game));
+
+		assertThrows(IllegalArgumentException.class, () -> service.deleteChannel(1L));
+
+		verify(pw, never()).unloadModule(anyLong());
+		verify(channels, never()).delete(any());
+	}
+
+	@Test
+	void deleteChannelOnUserChannelSucceeds() {
+		Channel extra = channel(2L);
+		extra.setName("Extra");
+		extra.setSinkName("sonar_extra");
+		extra.setNullSinkModule(7L);
+		when(channels.findById(2L)).thenReturn(Optional.of(extra));
+
+		service.deleteChannel(2L);
+
+		verify(meters).forget(extra);
+		verify(pw).stopEq("sonar_extra");
+		verify(pw).unloadModule(7L);
+		verify(channels).delete(extra);
 	}
 
 	@Test

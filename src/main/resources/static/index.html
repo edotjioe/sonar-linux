@@ -191,7 +191,7 @@ function renderChannels() {
           <button title="Move right" onclick="move(${i}, 1)" ${i === channelsCache.length - 1 ? 'disabled' : ''}>▶</button>
           <button title="Rename" onclick="renameChannel(${c.id})">✎</button>
           <button class="mute" title="Mute" onclick="toggleMute(${c.id}, ${!c.muted})">${c.muted ? '🔇' : '🔊'}</button>
-          ${c.mic ? '' : `<button class="danger" title="Delete" onclick="delChannel(${c.id})">✕</button>`}
+          ${c.deletable ? `<button class="danger" title="Delete" onclick="delChannel(${c.id})">✕</button>` : ''}
         </div>
       </header>
       <div class="row">

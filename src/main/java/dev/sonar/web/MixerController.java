@@ -66,7 +66,7 @@ public class MixerController {
 
 	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted,
 			String deviceName, String deviceDescription, int position, boolean active, boolean mic, double[] eq,
-			boolean noiseSuppression) {
+			boolean noiseSuppression, boolean deletable) {
 	}
 
 	public record EqView(int[] bands, double maxGain, List<EqProfile> profiles) {
@@ -93,7 +93,7 @@ public class MixerController {
 				c.getId(), c.getName(), c.getSinkName(), c.getVolume(), c.isMuted(),
 				c.getDeviceName(), desc.getOrDefault(c.getDeviceName(), c.getDeviceName()),
 				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(),
-				c.isNoiseSuppression())).toList();
+				c.isNoiseSuppression(), mixer.isDeletable(c))).toList();
 	}
 
 	/** channel id -> peak level 0..100 (-60..0 dB). The UI polls this ~10x/s while open. */

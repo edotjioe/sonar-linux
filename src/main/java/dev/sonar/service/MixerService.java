@@ -5,7 +5,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +33,10 @@ public class MixerService {
 	private final LevelMeter meters;
 	private final EqProfileRepository profiles;
 	private final PreferencesRepository preferences;
+
+	/** Same property Bootstrapper creates them from; matched by sink name, so a renamed one still counts. */
+	@Value("${sonar.default-channels:Game,Chat,Media,Aux}")
+	private String defaultChannels = "Game,Chat,Media,Aux";
 
 	/** ChatMix balances these two channels; by sink name, which survives a rename. */
 	static final String GAME_SINK = sinkNameFor("Game");
@@ -101,8 +107,17 @@ public class MixerService {
 		return name.trim();
 	}
 
+	/** Built-in channels (sonar.default-channels, and the mic) stay; only channels the user added can go. */
+	public boolean isDeletable(Channel c) {
+		return !c.isMic() && Stream.of(defaultChannels.split(","))
+				.noneMatch(name -> !name.isBlank() && sinkNameFor(name).equals(c.getSinkName()));
+	}
+
 	public void deleteChannel(long id) {
 		Channel c = require(id);
+		if (!isDeletable(c)) {
+			throw new IllegalArgumentException("Built-in channels can't be deleted: " + c.getName());
+		}
 		meters.forget(c);
 		pw.stopEq(c.getSinkName());
 		if (c.getNullSinkModule() >= 0) {
