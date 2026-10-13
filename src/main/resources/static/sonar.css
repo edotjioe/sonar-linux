@@ -109,6 +109,8 @@ tr:last-child td { border-bottom: none; }
 .preview { display: block; width: 100%; background: #000; border: 1px solid var(--line); margin-bottom: 14px; }
 .eqbtn { width: 100%; margin-top: 10px; text-align: left; }
 .live-dot { color: var(--live); }
+dialog .hotkey { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+dialog .hotkey input { width: 160px; cursor: pointer; }
 .nsbtn { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--dim); cursor: pointer; }
 dialog.eq { width: min(620px, 94vw); --ch: var(--accent); }
 .eqrow { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }

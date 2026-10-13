@@ -10,7 +10,7 @@
 <body>
 <div class="sweep" aria-hidden="true"></div>
 <main>
-  <h1>Sonar <small id="version" class="version"></small><small id="headset" class="version" hidden title="Headset batteries: Arctis (and the spare in its base station), Bluetooth headphones"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="$('prefs').showModal()">⚙</button></span></h1>
+  <h1>Sonar <small id="version" class="version"></small><small id="headset" class="version" hidden title="Headset batteries: Arctis (and the spare in its base station), Bluetooth headphones"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="loadHotkey().catch(() => {}); $('prefs').showModal()">⚙</button></span></h1>
   <div class="sub">PipeWire mixer — assign apps to channels, set volume, choose output.</div>
 
   <div class="chatmix" id="chatmix" hidden title="Double-click to centre">
@@ -39,7 +39,9 @@
     <legend>Hotkey opens</legend>
     <label><input type="radio" name="hotkeyOpens" value="overlay" /> Overlay (on top of games)</label>
     <label><input type="radio" name="hotkeyOpens" value="window" /> Window</label>
-    <div class="hint">Change the key in System Settings → Shortcuts → Sonar Overlay.</div>
+    <label class="hotkey">Key <input type="text" id="hotkey" readonly placeholder="…" title="Click, then press the new key combination"
+      onkeydown="captureHotkey(event)" /></label>
+    <div class="hint" id="hotkeyHint">Click the field, then press the new combination (e.g. Ctrl+Alt+S).</div>
   </fieldset>
   <fieldset>
     <legend>Applications</legend>
@@ -218,6 +220,31 @@ async function loadPrefs() {
   document.documentElement.classList.toggle('no-meters', !prefs.meters);
   $('cmSlider').value = prefs.chatMix;
   renderChatMix();
+}
+
+// The overlay hotkey lives in KDE's global shortcuts; Sonar changes it there (null key = not KDE)
+async function loadHotkey() {
+  const { key } = await (await fetch('/api/hotkey')).json();
+  $('hotkey').value = key || '';
+  $('hotkey').disabled = key == null;
+  if (key == null) $('hotkeyHint').textContent = 'Set the hotkey in your desktop\'s shortcut settings (only KDE can be changed from here).';
+}
+const KEY_MODS = [['metaKey', 'Meta'], ['ctrlKey', 'Ctrl'], ['altKey', 'Alt'], ['shiftKey', 'Shift']];
+async function captureHotkey(e) {
+  if (e.key === 'Tab') return;
+  e.preventDefault();
+  // e.code, not e.key: layout- and Shift-independent (KeyS, Digit1, F5)
+  const key = e.code.match(/^Key([A-Z])$|^Digit(\d)$|^(F\d{1,2})$/);
+  if (!key) return; // a lone modifier: wait for the key
+  const combo = [...KEY_MODS.filter(([p]) => e[p]).map(([, n]) => n), key[1] || key[2] || key[3]].join('+');
+  const hint = $('hotkeyHint');
+  try {
+    await api('/api/hotkey', 'PUT', { key: combo });
+    hint.textContent = `Hotkey set to ${combo}.`;
+  } catch (err) {
+    hint.textContent = err.message;
+  }
+  loadHotkey();
 }
 
 async function savePrefs() {

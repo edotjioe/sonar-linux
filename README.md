@@ -126,7 +126,8 @@ install/install.sh
 ```
 
 Sets Sonar up for your user: the backend as a systemd user service that starts at login (with a
-small-app JVM: 128 MiB heap, serial GC), the **Sonar** launcher, the **Meta+S** overlay hotkey,
+small-app JVM: 128 MiB heap, serial GC), the **Sonar** launcher, the **Meta+S** overlay hotkey (change it
+in Sonar's Preferences on KDE),
 and the icon. It builds `target/sonar.jar` first if needed, and fills in the repo's location, so
 re-run it after moving the repo. The files it installs are templates in `install/`.
 
