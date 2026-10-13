@@ -43,6 +43,7 @@ h1 { font-family: var(--font-display); font-weight: 700; text-transform: upperca
   font-size: 22px; margin: 0 0 4px; display: flex; align-items: center; gap: 14px; } /* buttons beside the title: on an ultrawide, space-between put them 5000 px away */
 h1::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; position: relative;
   box-shadow: 0 0 10px var(--accent); }
+h1.offline::before { background: var(--danger); box-shadow: 0 0 10px var(--danger); } /* e.g. OBS not reachable */
 .no-meters .meter { display: none; }
 .version { font-family: var(--font-mono); font-size: 12px; font-weight: normal; color: var(--faint); margin-left: -6px; text-transform: none; letter-spacing: 0; }
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); padding: 20px 22px; width: min(440px, 90vw);

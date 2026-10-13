@@ -10,7 +10,7 @@
 <body>
 <div class="sweep" aria-hidden="true"></div>
 <main>
-  <h1>OBS</h1>
+  <h1 id="title">OBS</h1>
   <div class="sub">Recording and OBS audio sources, over obs-websocket.</div>
   <img id="preview" class="preview" alt="OBS preview" hidden />
   <div id="obs"><div class="empty">Connecting…</div></div>
@@ -26,6 +26,7 @@ let barLast, inputsLast;
 async function loadObs() {
   const o = await (await fetch('/api/obs')).json();
   const host = $('obs');
+  setOnline(!o.reason);
   if (o.reason) {
     host.innerHTML = `<div class="empty">${esc(o.reason)}</div>`;
     barLast = inputsLast = undefined;
@@ -59,6 +60,8 @@ async function loadObs() {
   obsInputs = o.inputs;
 }
 let obsInputs = [];
+// the dot before the title: red while OBS can't be reached (or Sonar itself can't)
+function setOnline(online) { $('title').classList.toggle('offline', !online); }
 function obsRecord(action) { api('/api/obs/record', 'POST', { action }).then(loadObs).catch(e => alert(e.message)); }
 function obsInput(n, change) { api('/api/obs/input', 'POST', { name: obsInputs[n].name, ...change }).then(loadObs).catch(e => alert(e.message)); }
 
@@ -70,8 +73,8 @@ preview.onload = () => { preview.hidden = false; nextFrame(400); };
 preview.onerror = () => { preview.hidden = true; nextFrame(3000); };
 nextFrame(0);
 
-loadObs().catch(() => {});
-setInterval(() => loadObs().catch(() => {}), 1000);
+loadObs().catch(() => setOnline(false));
+setInterval(() => loadObs().catch(() => setOnline(false)), 1000);
 </script>
 </body>
 </html>
