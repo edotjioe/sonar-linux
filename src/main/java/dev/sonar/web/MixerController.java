@@ -28,6 +28,7 @@ import dev.sonar.repo.EqProfileRepository;
 import dev.sonar.repo.PreferencesRepository;
 import dev.sonar.service.AppClassifier;
 import dev.sonar.service.BaseStation;
+import dev.sonar.service.BluetoothBatteries;
 import dev.sonar.service.LevelMeter;
 import dev.sonar.service.MixerService;
 
@@ -45,10 +46,12 @@ public class MixerController {
 	private final EqProfileRepository profiles;
 	private final ObjectProvider<BuildProperties> build;
 	private final BaseStation base;
+	private final BluetoothBatteries bluetooth;
 
 	public MixerController(MixerService mixer, PipeWireService pw, AppAssignmentRepository assignments,
 			LevelMeter meters, AppClassifier classifier, PreferencesRepository preferences,
-			EqProfileRepository profiles, ObjectProvider<BuildProperties> build, BaseStation base) {
+			EqProfileRepository profiles, ObjectProvider<BuildProperties> build, BaseStation base,
+			BluetoothBatteries bluetooth) {
 		this.mixer = mixer;
 		this.pw = pw;
 		this.assignments = assignments;
@@ -58,6 +61,7 @@ public class MixerController {
 		this.profiles = profiles;
 		this.build = build;
 		this.base = base;
+		this.bluetooth = bluetooth;
 	}
 
 	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted,
@@ -210,7 +214,13 @@ public class MixerController {
 	/** Arctis Nova Pro Wireless headset status from its base station (all unknown without one). */
 	@GetMapping("/headset")
 	public BaseStation.Headset headset() {
-		return base.headset();
+		return base.refreshHeadset();
+	}
+
+	/** Bluetooth headsets/headphones that report a battery level (via UPower). */
+	@GetMapping("/batteries")
+	public List<BluetoothBatteries.Battery> batteries() {
+		return bluetooth.list();
 	}
 
 	@GetMapping("/devices")

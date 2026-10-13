@@ -111,10 +111,13 @@ sudo udevadm control --reload && sudo udevadm trigger
 ```
 
 Over the same interface Sonar reads the headset's battery and the spare battery charging in the
-base (shown next to the version, polled every 30 s), and mirrors the headset's mic-mute button
+base (shown next to the version, polled every 10 s), and mirrors the headset's mic-mute button
 onto the Mic channel. Status layout from [HeadsetControl](https://github.com/Sapd/HeadsetControl).
 
 Without the rule or the headset, Sonar runs normally and keeps looking every 5 s.
+
+Bluetooth headsets and headphones show their battery there too, when they report one: Sonar reads
+it from UPower, the same source as the desktop's Bluetooth applet.
 
 ## Install (desktop app)
 

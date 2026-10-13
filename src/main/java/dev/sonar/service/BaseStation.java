@@ -20,7 +20,7 @@ import jakarta.annotation.PreDestroy;
  * - ChatMix: the base only reports its dial once told to (that's what SteelSeries' Windows Sonar
  *   does), so we send "enable ChatMix", then apply its dial reports. Protocol from
  *   github.com/Dymstro/nova-chatmix-linux.
- * - Headset status (battery, spare battery, connection, mic mute): polled every 30 s. Layout as in
+ * - Headset status (battery, spare battery, connection, mic mute): polled every 10 s. Layout as in
  *   github.com/Sapd/HeadsetControl, mute byte found by probing.
  * - Mic mute: the base reports the headset's mute button as it's pressed; we mirror it onto the
  *   Mic channel, so Sonar shows it (the headset mutes the mic itself).
@@ -39,7 +39,7 @@ public class BaseStation {
 	private static final byte TX = 0x06, RX = 0x07;
 	private static final byte CHATMIX_ENABLE = 0x49, CHATMIX = 0x45;
 	private static final byte STATUS = (byte) 0xb0, MIC_MUTE = (byte) 0xbb;
-	private static final long STATUS_EVERY_MS = 30_000;
+	private static final long STATUS_EVERY_MS = 10_000;
 
 	/** battery/spare: percent; null = unknown (headset off or no base). */
 	public record Headset(boolean connected, boolean charging, Integer battery, Integer spareBattery, boolean micMuted) {
@@ -50,6 +50,8 @@ public class BaseStation {
 	private final MixerService mixer;
 	private volatile FileOutputStream out;
 	private volatile Headset headset = NONE;
+	/** When the last status reply arrived (nanoTime), so a refresh can wait for the next one. */
+	private volatile long statusAt;
 	/** Last mute state the headset reported; null after (re)connecting. */
 	private Boolean hardwareMute;
 
@@ -66,6 +68,24 @@ public class BaseStation {
 	/** Headset status as last reported by the base; all unknown without one. */
 	public Headset headset() {
 		return out == null ? NONE : headset;
+	}
+
+	/** Ask the base for its status now and wait (≤ 300 ms) for the reply, e.g. when the mixer opens. */
+	public Headset refreshHeadset() {
+		long before = statusAt;
+		try {
+			if (out != null) {
+				send(STATUS, 0);
+			}
+			for (int i = 0; i < 10 && out != null && statusAt == before; i++) {
+				Thread.sleep(30);
+			}
+		} catch (IOException ignored) {
+			// unplugged: the reader reconnects, and headset() reports unknown meanwhile
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+		return headset();
 	}
 
 	private void pollStatus() {
@@ -114,6 +134,7 @@ public class BaseStation {
 						} else if (buf[0] == TX && buf[1] == STATUS) {
 							Headset h = parseStatus(buf);
 							headset = h;
+							statusAt = System.nanoTime();
 							if (h.connected()) {
 								micMuted(h.micMuted());
 							}
@@ -134,7 +155,7 @@ public class BaseStation {
 		}
 	}
 
-	/** Only on a change: the 30 s status poll mustn't undo a mute set in Sonar's own UI. */
+	/** Only on a change: the status poll mustn't undo a mute set in Sonar's own UI. */
 	private void micMuted(boolean muted) {
 		headset = new Headset(headset.connected(), headset.charging(), headset.battery(), headset.spareBattery(), muted);
 		if (!Boolean.valueOf(muted).equals(hardwareMute)) {

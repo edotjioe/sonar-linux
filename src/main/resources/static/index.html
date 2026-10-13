@@ -10,7 +10,7 @@
 <body>
 <div class="sweep" aria-hidden="true"></div>
 <main>
-  <h1>Sonar <small id="version" class="version"></small><small id="headset" class="version" hidden title="Arctis headset battery, and the spare battery in the base station"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="$('prefs').showModal()">⚙</button></span></h1>
+  <h1>Sonar <small id="version" class="version"></small><small id="headset" class="version" hidden title="Headset batteries: Arctis (and the spare in its base station), Bluetooth headphones"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="$('prefs').showModal()">⚙</button></span></h1>
   <div class="sub">PipeWire mixer — assign apps to channels, set volume, choose output.</div>
 
   <div class="chatmix" id="chatmix" hidden title="Double-click to centre">
@@ -233,13 +233,18 @@ function route(app, channelId) {
   api('/api/route', 'POST', { binary: app.binary, displayName: app.appName, channelId }).then(loadApps).catch(alert);
 }
 function setVolume(id, v) { api(`/api/channels/${id}/volume`, 'POST', { volume: +v }).catch(alert); }
-// Arctis Nova Pro Wireless battery, from its base station; hidden without one
+// Headset batteries: the Arctis (from its base station) and Bluetooth headphones (via UPower);
+// hidden when there are none
 async function loadHeadset() {
-  const h = await (await fetch('/api/headset')).json();
-  const el = $('headset');
-  el.hidden = h.battery == null && h.spareBattery == null;
-  el.textContent = `🎧 ${h.connected ? (h.charging ? '⚡' : '') + h.battery + '%' : 'off'}`
-    + (h.spareBattery == null ? '' : ` · spare ${h.spareBattery}%`);
+  const [h, bt] = await Promise.all([fetch('/api/headset').then(r => r.json()), fetch('/api/batteries').then(r => r.json())]);
+  const parts = [];
+  if (h.battery != null || h.spareBattery != null) {
+    parts.push(`🎧 ${h.connected ? (h.charging ? '⚡' : '') + h.battery + '%' : 'off'}`
+      + (h.spareBattery == null ? '' : ` · spare ${h.spareBattery}%`));
+  }
+  bt.forEach(b => parts.push(`🎧 ${b.name} ${b.percent}%`));
+  $('headset').hidden = !parts.length;
+  $('headset').textContent = parts.join('  ');
 }
 
 function setNoise(id, enabled) { api(`/api/channels/${id}/noise`, 'POST', { enabled }).then(loadChannels).catch(e => { alert(e.message); loadChannels(); }); }
@@ -342,7 +347,7 @@ if (document.documentElement.classList.contains('overlay')) {
   await loadApps();
   setInterval(loadApps, 2000);
   loadHeadset().catch(() => {});
-  setInterval(() => loadHeadset().catch(() => {}), 30000);
+  setInterval(() => loadHeadset().catch(() => {}), 10000);
   setInterval(() => $('chatmix').hidden || syncChatMix().catch(() => {}), 1000);
   // don't re-render under the user while they drag EQ sliders
   setInterval(() => $('eq').open || loadChannels(), 5000);

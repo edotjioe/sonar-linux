@@ -46,7 +46,7 @@ class MixerControllerVersionTest {
 
 	@BeforeEach
 	void setUp() {
-		controller = new MixerController(mixer, pw, assignments, meters, classifier, preferences, profiles, build, null);
+		controller = new MixerController(mixer, pw, assignments, meters, classifier, preferences, profiles, build, null, null);
 	}
 
 	@Test
