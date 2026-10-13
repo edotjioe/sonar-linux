@@ -1,5 +1,6 @@
 package dev.sonar.domain;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.IntStream;
@@ -46,6 +47,14 @@ public record EqBand(String type, double freq, double gain, double q) {
 			throw new IllegalArgumentException("EQ takes at most " + MAX_BANDS + " bands");
 		}
 		return bands.stream().map(EqBand::checked).toList();
+	}
+
+	/** Validate and clamp Bass/Voice/Treble from the API. */
+	public static double[] checkTone(double[] tone) {
+		if (tone == null || tone.length != 3) {
+			throw new IllegalArgumentException("Tone needs 3 gains: bass, voice, treble");
+		}
+		return Arrays.stream(tone).map(g -> clamp(g, -MAX_GAIN, MAX_GAIN)).toArray();
 	}
 
 	private EqBand checked() {

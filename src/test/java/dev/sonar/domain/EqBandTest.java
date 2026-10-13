@@ -1,5 +1,6 @@
 package dev.sonar.domain;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -31,6 +32,13 @@ class EqBandTest {
 		List<EqBand> eleven = new ArrayList<>(EqBand.graphic());
 		eleven.add(new EqBand("peaking", 1000, 0, 1.41));
 		assertThrows(IllegalArgumentException.class, () -> EqBand.check(eleven));
+	}
+
+	@Test
+	void checkToneClampsAndValidates() {
+		assertArrayEquals(new double[] { 12, -12, 1 }, EqBand.checkTone(new double[] { 20, -20, 1 }));
+		assertThrows(IllegalArgumentException.class, () -> EqBand.checkTone(null));
+		assertThrows(IllegalArgumentException.class, () -> EqBand.checkTone(new double[2]));
 	}
 
 	@Test

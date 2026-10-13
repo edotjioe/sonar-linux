@@ -224,7 +224,7 @@ function renderChannels() {
       <select onchange="setDevice(${c.id}, this.value)">
         ${(c.mic ? sources : devices).map(d => `<option value="${esc(d.name)}" ${c.deviceName === d.name ? 'selected' : ''}>${esc(d.description)}</option>`).join('')}
       </select>
-      <button class="eqbtn" onclick="openEq(${c.id})">EQ: ${esc(profileName(c.eq))}</button>
+      <button class="eqbtn" onclick="openEq(${c.id})">EQ: ${esc(profileName(c.eq, c.tone))}</button>
       ${c.mic ? `<label class="nsbtn" title="Remove background noise (keyboard, fans) with rnnoise"><input type="checkbox" ${c.noiseSuppression ? 'checked' : ''} onchange="setNoise(${c.id}, this.checked)" /> Noise suppression</label>` : ''}
       <div class="devlabel">${c.active ? '<span class="live-dot">●</span> live' : '○ offline'} — ${esc(c.sinkName)}</div>
     </div>`).join('');
@@ -327,8 +327,9 @@ async function loadEq() { eqInfo = await (await fetch('/api/eq')).json(); }
 const sameBand = (a, b) => a.type === b.type && Math.abs(a.freq / b.freq - 1) < 0.005
   && Math.abs(a.gain - b.gain) < 0.05 && Math.abs(a.q - b.q) < 0.005;
 const sameEq = (a, b) => a.length === b.length && a.every((band, i) => sameBand(band, b[i]));
-function matchProfile(bands) { return eqInfo.profiles.find(p => sameEq(p.bands, bands)); }
-function profileName(bands) { return matchProfile(bands)?.name ?? 'Custom'; }
+const sameTone = (a, b) => a.every((g, i) => Math.abs(g - b[i]) < 0.05);
+function matchProfile(bands, tone) { return eqInfo.profiles.find(p => sameEq(p.bands, bands) && sameTone(p.tone, tone)); }
+function profileName(bands, tone) { return matchProfile(bands, tone)?.name ?? 'Custom'; }
 function fmtHz(f) { return f >= 1000 ? +(f / 1000).toFixed(f < 10000 ? 2 : 1) + 'k' : Math.round(f); }
 
 // Graph: log frequency (20 Hz–20 kHz) × dB. The curve is the real response of the filter-chain:
@@ -348,12 +349,16 @@ const EQ_TONE = [{ type: 'lowshelf', freq: 100, q: 0.71 }, { type: 'peaking', fr
 let eqTone = [0, 0, 0], eqToneTimer;
 function toneChanged() {
   eqTone = [...document.querySelectorAll('.eqtone input')].map(i => +i.value);
-  drawEq();
+  sendTone();
+}
+function sendTone() {
+  renderEqHeader();
   clearTimeout(eqToneTimer);
   eqToneTimer = setTimeout(() => {
     const tone = [...eqTone];
     api(`/api/channels/${eqChannel}/tone`, 'POST', { tone }).catch(alert);
     channelsCache.find(c => c.id === eqChannel).tone = tone;
+    renderChannels();
   }, 60);
 }
 let eqView = 'curve'; // or 'sliders' (see drawSliders)
@@ -576,7 +581,7 @@ graph.addEventListener('focusin', e => {
   drawEq();
 });
 function renderEqHeader() {
-  const match = matchProfile(eqCur);
+  const match = matchProfile(eqCur, eqTone);
   $('eqProfile').innerHTML = (match ? '' : '<option value="" selected>Custom</option>') + eqInfo.profiles.map(p =>
     `<option value="${p.id}" ${p === match ? 'selected' : ''}>${esc(p.name)}${p.builtIn ? '' : ' ★'}</option>`).join('');
   $('eqDelete').disabled = !match || match.builtIn;
@@ -598,20 +603,22 @@ function pickProfile(id) {
   const p = eqInfo.profiles.find(p => p.id === +id);
   if (!p) return;
   eqCur = p.bands.map(b => ({ ...b }));
+  eqTone = [...p.tone];
   bandChanged();
+  sendTone();
 }
 async function saveProfile() {
   const name = prompt('Profile name', '')?.trim();
   if (!name) return;
   try {
-    await api('/api/eq/profiles', 'POST', { name, bands: eqCur });
+    await api('/api/eq/profiles', 'POST', { name, bands: eqCur, tone: eqTone });
     await loadEq();
     renderEqHeader();
     renderChannels();
   } catch (e) { alert(e.message); }
 }
 async function deleteProfile() {
-  const p = matchProfile(eqCur);
+  const p = matchProfile(eqCur, eqTone);
   if (!p || p.builtIn || !confirm(`Delete profile "${p.name}"?`)) return;
   try {
     await api(`/api/eq/profiles/${p.id}`, 'DELETE');

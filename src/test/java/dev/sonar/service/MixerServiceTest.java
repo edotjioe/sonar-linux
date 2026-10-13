@@ -303,11 +303,11 @@ class MixerServiceTest {
 		c.setSinkName("sonar_game");
 		when(channels.findById(1L)).thenReturn(Optional.of(c));
 
-		service.setTone(1L, new double[]{20, -3, 0});
+		service.setTone(1L, new double[] { 20, -3, 0 });
 
-		assertArrayEquals(new double[]{12, -3, 0}, c.getTone());
-		verify(pw).setEqParams(eq("sonar_game"), eq(EqBand.tone(new double[]{12, -3, 0})));
-		assertThrows(IllegalArgumentException.class, () -> service.setTone(1L, new double[]{1, 2}));
+		assertArrayEquals(new double[] { 12, -3, 0 }, c.getTone());
+		verify(pw).setEqParams(eq("sonar_game"), eq(EqBand.tone(new double[] { 12, -3, 0 })));
+		assertThrows(IllegalArgumentException.class, () -> service.setTone(1L, new double[] { 1, 2 }));
 	}
 
 	@Test
@@ -338,10 +338,11 @@ class MixerServiceTest {
 		when(profiles.findByName("Mine")).thenReturn(Optional.empty());
 		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
 
-		EqProfile p = service.saveProfile("Mine", EqBand.graphic());
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(), new double[] { 20, -3, 0 });
 
 		assertEquals("Mine", p.getName());
 		assertEquals(false, p.isBuiltIn());
+		assertArrayEquals(new double[] { 12, -3, 0 }, p.getTone());
 	}
 
 	@Test
@@ -349,7 +350,7 @@ class MixerServiceTest {
 		when(profiles.findByName("Flat"))
 				.thenReturn(Optional.of(new EqProfile("Flat", EqBand.graphic(), true)));
 
-		assertThrows(IllegalArgumentException.class, () -> service.saveProfile("Flat", EqBand.graphic()));
+		assertThrows(IllegalArgumentException.class, () -> service.saveProfile("Flat", EqBand.graphic(), new double[3]));
 	}
 
 	@Test
@@ -358,7 +359,7 @@ class MixerServiceTest {
 		when(profiles.findByName("Mine")).thenReturn(Optional.of(existing));
 		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
 
-		EqProfile p = service.saveProfile("Mine", EqBand.graphic(3.0));
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(3.0), new double[3]);
 
 		assertEquals(3.0, p.getBands().get(0).gain());
 	}

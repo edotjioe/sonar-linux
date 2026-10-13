@@ -41,6 +41,9 @@ public class EqProfile {
 	@JdbcTypeCode(SqlTypes.JSON)
 	private List<EqBand> bands;
 
+	/** Bass, Voice, Treble (dB), see {@link EqBand#tone}; null (older rows, built-ins) = all 0. */
+	private double[] tone;
+
 	private boolean builtIn;
 
 	public EqProfile() {
@@ -66,6 +69,14 @@ public class EqProfile {
 
 	public void setBands(List<EqBand> bands) {
 		this.bands = bands;
+	}
+
+	public double[] getTone() {
+		return tone == null ? new double[3] : tone;
+	}
+
+	public void setTone(double[] tone) {
+		this.tone = tone;
 	}
 
 	public boolean isBuiltIn() {

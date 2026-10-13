@@ -1,7 +1,6 @@
 package dev.sonar.service;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -247,10 +246,7 @@ public class MixerService {
 	/** Set a channel's Bass/Voice/Treble (dB, clamped to ±MAX_GAIN); applied live. */
 	public Channel setTone(long id, double[] tone) {
 		Channel c = require(id);
-		if (tone == null || tone.length != 3) {
-			throw new IllegalArgumentException("Tone needs 3 gains: bass, voice, treble");
-		}
-		c.setTone(Arrays.stream(tone).map(g -> Math.max(-EqBand.MAX_GAIN, Math.min(EqBand.MAX_GAIN, g))).toArray());
+		c.setTone(EqBand.checkTone(tone));
 		pw.setEqParams(c.getSinkName(), chain(c));
 		return channels.save(c);
 	}
@@ -261,17 +257,18 @@ public class MixerService {
 	}
 
 	/** Create or overwrite a custom profile by name. Presets are read-only. */
-	public EqProfile saveProfile(String name, List<EqBand> bands) {
+	public EqProfile saveProfile(String name, List<EqBand> bands, double[] tone) {
 		name = checkName(name);
 		List<EqBand> checked = EqBand.check(bands);
+		double[] checkedTone = EqBand.checkTone(tone);
 		EqProfile p = profiles.findByName(name).orElse(null);
 		if (p == null) {
-			return profiles.save(new EqProfile(name, checked, false));
-		}
-		if (p.isBuiltIn()) {
+			p = new EqProfile(name, checked, false);
+		} else if (p.isBuiltIn()) {
 			throw new IllegalArgumentException("Can't overwrite a built-in profile: " + name);
 		}
 		p.setBands(checked);
+		p.setTone(checkedTone);
 		return profiles.save(p);
 	}
 

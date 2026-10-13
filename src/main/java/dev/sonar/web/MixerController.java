@@ -73,7 +73,7 @@ public class MixerController {
 	public record EqView(double maxGain, List<EqProfile> profiles) {
 	}
 
-	public record EqBody(String name, List<EqBand> bands) {
+	public record EqBody(String name, List<EqBand> bands, double[] tone) {
 	}
 
 	public record ToneBody(double[] tone) {
@@ -165,7 +165,7 @@ public class MixerController {
 	/** Create a custom profile, or overwrite the custom one with that name. */
 	@PostMapping("/eq/profiles")
 	public EqProfile saveProfile(@RequestBody EqBody body) {
-		return mixer.saveProfile(body.name(), body.bands());
+		return mixer.saveProfile(body.name(), body.bands(), body.tone());
 	}
 
 	@DeleteMapping("/eq/profiles/{id}")
