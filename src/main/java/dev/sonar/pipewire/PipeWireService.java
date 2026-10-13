@@ -34,7 +34,9 @@ public class PipeWireService {
 
 	private Result run(String... cmd) {
 		try {
-			Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+			ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
+			pb.environment().put("LC_ALL", "C.UTF-8"); // we parse the output: pactl is translated on e.g. Fedora/Bazzite
+			Process p = pb.start();
 			String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 			int exit = p.waitFor();
 			return new Result(exit, out);
@@ -44,6 +46,9 @@ public class PipeWireService {
 	}
 
 	private static long parseLong(String s) {
+		if (s == null) {
+			return -1;
+		}
 		try {
 			return Long.parseLong(s.trim());
 		} catch (NumberFormatException e) {
@@ -291,6 +296,9 @@ public class PipeWireService {
 				continue;
 			}
 			int index = (int) parseLong(grab(block, Pattern.compile("^(\\d+)")));
+			if (index < 0) {
+				continue; // not a sink-input block, e.g. a warning printed before the first one
+			}
 			String appName = grab(block, Pattern.compile("application\\.name = \"([^\"]*)\""));
 			String binary = grab(block, Pattern.compile("application\\.process\\.binary = \"([^\"]*)\""));
 			if (appName == null && binary == null) {
