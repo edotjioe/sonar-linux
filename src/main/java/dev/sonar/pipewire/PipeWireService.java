@@ -21,7 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import dev.sonar.domain.EqProfile;
+import dev.sonar.domain.EqBand;
 import dev.sonar.pipewire.PipeWireModels.AppStream;
 import dev.sonar.pipewire.PipeWireModels.Module;
 import dev.sonar.pipewire.PipeWireModels.PhysicalSink;
@@ -156,13 +156,13 @@ public class PipeWireService {
 	 * (Re)start the EQ for channel node `name`, routed to/from `device`.
 	 * denoise: put rnnoise in front of the EQ (mic only); skipped when the plugin isn't installed.
 	 */
-	public void startEq(String name, String description, String device, double[] gains, boolean mic, boolean denoise) {
+	public void startEq(String name, String description, String device, List<EqBand> bands, boolean mic, boolean denoise) {
 		stopEq(name);
 		Path plugin = mic && denoise ? rnnoisePlugin() : null;
 		try {
 			Files.createDirectories(EQ_DIR);
 			Path conf = EQ_DIR.resolve(name + ".conf");
-			Files.writeString(conf, eqConf(name, description, device, gains, mic, plugin));
+			Files.writeString(conf, eqConf(name, description, device, bands, mic, plugin));
 			eqProcesses.put(name, new ProcessBuilder("pipewire", "-c", conf.toString())
 					.redirectErrorStream(true).redirectOutput(Redirect.DISCARD).start());
 		} catch (IOException e) {
@@ -192,11 +192,14 @@ public class PipeWireService {
 		return p != null && p.isAlive();
 	}
 
-	/** Live gain change on a running EQ; gains[i] is band b{i}. */
-	public void setEqGains(String name, double[] gains) {
+	/** Live freq/gain/Q change on a running EQ; bands[i] is node b{i}. Types can't change live (restart instead). */
+	public void setEqParams(String name, List<EqBand> bands) {
 		StringBuilder params = new StringBuilder();
-		for (int i = 0; i < gains.length; i++) {
-			params.append(" \"b").append(i).append(":Gain\" ").append(gains[i]);
+		for (int i = 0; i < bands.size(); i++) {
+			EqBand b = bands.get(i);
+			params.append(" \"b").append(i).append(":Freq\" ").append(b.freq())
+					.append(" \"b").append(i).append(":Q\" ").append(b.q())
+					.append(" \"b").append(i).append(":Gain\" ").append(b.gain());
 		}
 		run("pw-cli", "set-param", name + "_eq_in", "Props", "{ params = [" + params + " ] }");
 	}
@@ -225,10 +228,10 @@ public class PipeWireService {
 	}
 
 	/**
-	 * filter-chain config: a chain of peaking biquads, one per band (SPA-JSON).
+	 * filter-chain config: a chain of biquads, one per band (SPA-JSON).
 	 * rnnoise: the noise-suppression plugin to put in front of the biquads, or null for none.
 	 */
-	static String eqConf(String name, String description, String device, double[] gains, boolean mic, Path rnnoise) {
+	static String eqConf(String name, String description, String device, List<EqBand> bands, boolean mic, Path rnnoise) {
 		StringBuilder nodes = new StringBuilder();
 		StringBuilder links = new StringBuilder();
 		if (rnnoise != null) {
@@ -237,9 +240,14 @@ public class PipeWireService {
 					.append(" label = noise_suppressor_mono control = { \"VAD Threshold (%)\" = 50.0 } }\n");
 			links.append("          { output = \"ns:Output\" input = \"b0:In\" }\n");
 		}
-		for (int i = 0; i < gains.length; i++) {
-			nodes.append("          { type = builtin name = b").append(i).append(" label = bq_peaking control = { \"Freq\" = ")
-					.append(EqProfile.BANDS[i]).append(".0 \"Q\" = 1.41 \"Gain\" = ").append(gains[i]).append(" } }\n");
+		if (bands.isEmpty()) {
+			bands = List.of(new EqBand("peaking", 1000, 0, 1)); // a filter graph needs a node: 0 dB passes audio through
+		}
+		for (int i = 0; i < bands.size(); i++) {
+			EqBand b = bands.get(i);
+			nodes.append("          { type = builtin name = b").append(i).append(" label = bq_").append(b.type())
+					.append(" control = { \"Freq\" = ").append(b.freq()).append(" \"Q\" = ").append(b.q())
+					.append(" \"Gain\" = ").append(b.gain()).append(" } }\n");
 			if (i > 0) {
 				links.append("          { output = \"b").append(i - 1).append(":Out\" input = \"b").append(i).append(":In\" }\n");
 			}

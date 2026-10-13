@@ -55,11 +55,13 @@ public class Bootstrapper implements ApplicationRunner {
 	public void run(ApplicationArguments args) {
 		pw.stopAllEq();
 		pw.unloadSonarModules();
-		EqProfile.PRESETS.forEach((name, gains) -> {
-			if (profiles.findByName(name).isEmpty()) {
-				profiles.save(new EqProfile(name, gains, true));
+		// rewrite the built-ins every start, so changed preset definitions reach existing databases
+		EqProfile.PRESETS.forEach((name, bands) -> profiles.findByName(name).ifPresentOrElse(p -> {
+			if (p.isBuiltIn()) {
+				p.setBands(bands);
+				profiles.save(p);
 			}
-		});
+		}, () -> profiles.save(new EqProfile(name, bands, true))));
 		// restore existing channels first; createChannel loads its own modules, so new ones must come after
 		for (var channel : channels.findAll()) {
 			mixer.applyChannel(channel);

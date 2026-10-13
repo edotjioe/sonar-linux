@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import dev.sonar.domain.AppAssignment;
 import dev.sonar.domain.Channel;
+import dev.sonar.domain.EqBand;
 import dev.sonar.domain.EqProfile;
 import dev.sonar.domain.Preferences;
 import dev.sonar.pipewire.PipeWireModels.AppStream;
@@ -227,18 +228,25 @@ public class MixerService {
 		return volume;
 	}
 
-	/** Set a channel's EQ curve (dB per band, clamped to ±MAX_GAIN); applied live. */
-	public Channel setEq(long id, double[] gains) {
+	/** Set a channel's EQ. Freq/gain/Q apply live; added/removed bands or a type change restart the EQ process (a short blip). */
+	public Channel setEq(long id, List<EqBand> bands) {
 		Channel c = require(id);
-		c.setEq(checkGains(gains));
-		pw.setEqGains(c.getSinkName(), c.getEq());
+		List<EqBand> checked = EqBand.check(bands);
+		boolean sameTypes = c.getEq().stream().map(EqBand::type).toList()
+				.equals(checked.stream().map(EqBand::type).toList());
+		c.setEq(checked);
+		if (sameTypes) {
+			pw.setEqParams(c.getSinkName(), checked);
+		} else {
+			restartEq(c);
+		}
 		return channels.save(c);
 	}
 
 	/** Create or overwrite a custom profile by name. Presets are read-only. */
-	public EqProfile saveProfile(String name, double[] gains) {
+	public EqProfile saveProfile(String name, List<EqBand> bands) {
 		name = checkName(name);
-		double[] checked = checkGains(gains);
+		List<EqBand> checked = EqBand.check(bands);
 		EqProfile p = profiles.findByName(name).orElse(null);
 		if (p == null) {
 			return profiles.save(new EqProfile(name, checked, false));
@@ -246,7 +254,7 @@ public class MixerService {
 		if (p.isBuiltIn()) {
 			throw new IllegalArgumentException("Can't overwrite a built-in profile: " + name);
 		}
-		p.setGains(checked);
+		p.setBands(checked);
 		return profiles.save(p);
 	}
 
@@ -258,16 +266,6 @@ public class MixerService {
 		profiles.delete(p);
 	}
 
-	private static double[] checkGains(double[] gains) {
-		if (gains == null || gains.length != EqProfile.BANDS.length) {
-			throw new IllegalArgumentException("EQ needs " + EqProfile.BANDS.length + " gains");
-		}
-		double[] out = new double[gains.length];
-		for (int i = 0; i < gains.length; i++) {
-			out[i] = Math.max(-EqProfile.MAX_GAIN, Math.min(EqProfile.MAX_GAIN, gains[i]));
-		}
-		return out;
-	}
 
 	/**
 	 * (Re)create a channel's modules and re-apply its volume/mute. Called from

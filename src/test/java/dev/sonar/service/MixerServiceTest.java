@@ -12,11 +12,12 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,6 +30,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import dev.sonar.domain.Channel;
+import dev.sonar.domain.EqBand;
 import dev.sonar.domain.EqProfile;
 import dev.sonar.domain.Preferences;
 import dev.sonar.pipewire.PipeWireModels;
@@ -269,16 +271,17 @@ class MixerServiceTest {
 	void setEqClampsGains() {
 		Channel c = channel(1L);
 		c.setSinkName("sonar_game");
+		c.setEq(EqBand.graphic());
 		when(channels.findById(1L)).thenReturn(Optional.of(c));
-		double[] gains = new double[EqProfile.BANDS.length];
-		gains[0] = 20;
-		gains[9] = -20;
+		List<EqBand> bands = new ArrayList<>(EqBand.graphic());
+		bands.set(0, new EqBand("peaking", 31, 20, 1.41));
+		bands.set(9, new EqBand("peaking", 16000, -20, 1.41));
 
-		service.setEq(1L, gains);
+		service.setEq(1L, bands);
 
-		assertEquals(12.0, c.getEq()[0]);
-		assertEquals(-12.0, c.getEq()[9]);
-		verify(pw).setEqGains(eq("sonar_game"), any());
+		assertEquals(12.0, c.getEq().get(0).gain());
+		assertEquals(-12.0, c.getEq().get(9).gain());
+		verify(pw).setEqParams(eq("sonar_game"), any());
 	}
 
 	@Test
@@ -286,8 +289,34 @@ class MixerServiceTest {
 		Channel c = channel(1L);
 		when(channels.findById(1L)).thenReturn(Optional.of(c));
 
+		List<EqBand> eleven = new ArrayList<>(EqBand.graphic());
+		eleven.add(new EqBand("peaking", 1000, 0, 1.41));
+
 		assertThrows(IllegalArgumentException.class, () -> service.setEq(1L, null));
-		assertThrows(IllegalArgumentException.class, () -> service.setEq(1L, new double[3]));
+		assertThrows(IllegalArgumentException.class, () -> service.setEq(1L, eleven));
+	}
+
+	@Test
+	void setEqAppliesParamsForSameTypesButRestartsForChangedType() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		c.setName("Game");
+		c.setEq(EqBand.graphic());
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		service.setEq(1L, EqBand.graphic());
+
+		verify(pw).setEqParams(eq("sonar_game"), any());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+
+		reset(pw);
+
+		List<EqBand> changed = new ArrayList<>(EqBand.graphic());
+		changed.set(0, new EqBand("lowshelf", 31, 0, 1.41));
+		service.setEq(1L, changed);
+
+		verify(pw).startEq(eq("sonar_game"), eq("Game"), any(), any(), eq(false), eq(false));
+		verify(pw, never()).setEqParams(anyString(), any());
 	}
 
 	@Test
@@ -295,7 +324,7 @@ class MixerServiceTest {
 		when(profiles.findByName("Mine")).thenReturn(Optional.empty());
 		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
 
-		EqProfile p = service.saveProfile("Mine", new double[EqProfile.BANDS.length]);
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic());
 
 		assertEquals("Mine", p.getName());
 		assertEquals(false, p.isBuiltIn());
@@ -304,27 +333,25 @@ class MixerServiceTest {
 	@Test
 	void saveProfileRejectsBuiltIn() {
 		when(profiles.findByName("Flat"))
-				.thenReturn(Optional.of(new EqProfile("Flat", new double[EqProfile.BANDS.length], true)));
+				.thenReturn(Optional.of(new EqProfile("Flat", EqBand.graphic(), true)));
 
-		assertThrows(IllegalArgumentException.class, () -> service.saveProfile("Flat", new double[EqProfile.BANDS.length]));
+		assertThrows(IllegalArgumentException.class, () -> service.saveProfile("Flat", EqBand.graphic()));
 	}
 
 	@Test
 	void saveProfileOverwritesCustom() {
-		EqProfile existing = new EqProfile("Mine", new double[EqProfile.BANDS.length], false);
+		EqProfile existing = new EqProfile("Mine", EqBand.graphic(), false);
 		when(profiles.findByName("Mine")).thenReturn(Optional.of(existing));
 		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
-		double[] gains = new double[EqProfile.BANDS.length];
-		Arrays.fill(gains, 3.0);
 
-		EqProfile p = service.saveProfile("Mine", gains);
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(3.0));
 
-		assertEquals(3.0, p.getGains()[0]);
+		assertEquals(3.0, p.getBands().get(0).gain());
 	}
 
 	@Test
 	void deleteProfileRejectsBuiltIn() {
-		EqProfile builtIn = new EqProfile("Flat", new double[EqProfile.BANDS.length], true);
+		EqProfile builtIn = new EqProfile("Flat", EqBand.graphic(), true);
 		when(profiles.findById(1L)).thenReturn(Optional.of(builtIn));
 
 		assertThrows(IllegalArgumentException.class, () -> service.deleteProfile(1L));
@@ -332,7 +359,7 @@ class MixerServiceTest {
 
 	@Test
 	void deleteProfileDeletesCustom() {
-		EqProfile custom = new EqProfile("Mine", new double[EqProfile.BANDS.length], false);
+		EqProfile custom = new EqProfile("Mine", EqBand.graphic(), false);
 		when(profiles.findById(1L)).thenReturn(Optional.of(custom));
 
 		service.deleteProfile(1L);

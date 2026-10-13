@@ -1,7 +1,11 @@
 package dev.sonar.domain;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -9,23 +13,19 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 
-/** A named EQ curve: one gain (dB) per band in {@link #BANDS}. Built-in presets can't be changed. */
+/** A named EQ: up to {@link EqBand#MAX_BANDS} bands. Built-in presets can't be changed (they're rewritten on startup). */
 @Entity
 public class EqProfile {
 
-	/** Band centre frequencies (Hz): a one-octave graphic EQ. */
-	public static final int[] BANDS = { 31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 };
-
-	public static final double MAX_GAIN = 12;
-
-	public static final Map<String, double[]> PRESETS = new LinkedHashMap<>();
+	public static final Map<String, List<EqBand>> PRESETS = new LinkedHashMap<>();
 
 	static {
-		PRESETS.put("Flat", new double[BANDS.length]);
-		PRESETS.put("Bass Boost", new double[] { 6, 5, 4, 2, 0, 0, 0, 0, 0, 0 });
-		PRESETS.put("Footsteps", new double[] { -4, -3, -2, -1, 0, 2, 4, 5, 3, 0 });
-		PRESETS.put("Voice Clarity", new double[] { -8, -6, -3, 0, 1, 3, 4, 3, 1, 0 });
-		PRESETS.put("Treble Boost", new double[] { 0, 0, 0, 0, 0, 1, 2, 4, 5, 6 });
+		PRESETS.put("Flat", List.of());
+		PRESETS.put("Bass Boost", List.of(new EqBand("lowshelf", 120, 6, 0.71)));
+		PRESETS.put("Footsteps", List.of(new EqBand("lowshelf", 200, -4, 0.71), new EqBand("peaking", 3000, 5, 0.9)));
+		PRESETS.put("Voice Clarity", List.of(new EqBand("highpass", 90, 0, 0.71), new EqBand("peaking", 300, -3, 1),
+				new EqBand("peaking", 3000, 4, 0.8)));
+		PRESETS.put("Treble Boost", List.of(new EqBand("highshelf", 4000, 6, 0.71)));
 	}
 
 	@Id
@@ -35,16 +35,20 @@ public class EqProfile {
 	@Column(unique = true)
 	private String name;
 
+	/** Before parametric bands: one gain per graphic band. Only read when bands is null. */
 	private double[] gains;
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	private List<EqBand> bands;
 
 	private boolean builtIn;
 
 	public EqProfile() {
 	}
 
-	public EqProfile(String name, double[] gains, boolean builtIn) {
+	public EqProfile(String name, List<EqBand> bands, boolean builtIn) {
 		this.name = name;
-		this.gains = gains;
+		this.bands = bands;
 		this.builtIn = builtIn;
 	}
 
@@ -56,12 +60,12 @@ public class EqProfile {
 		return name;
 	}
 
-	public double[] getGains() {
-		return gains;
+	public List<EqBand> getBands() {
+		return bands != null ? bands : EqBand.fromLegacy(gains);
 	}
 
-	public void setGains(double[] gains) {
-		this.gains = gains;
+	public void setBands(List<EqBand> bands) {
+		this.bands = bands;
 	}
 
 	public boolean isBuiltIn() {

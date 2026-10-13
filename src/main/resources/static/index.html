@@ -63,8 +63,21 @@
     <select id="eqProfile" onchange="pickProfile(this.value)"></select>
     <button onclick="saveProfile()">Save as…</button>
     <button class="danger" id="eqDelete" onclick="deleteProfile()">Delete</button>
+    <button id="eqViewBtn" onclick="setEqView(eqView === 'curve' ? 'sliders' : 'curve')"></button>
   </div>
-  <div class="bands" id="eqBands"></div>
+  <div class="bands" id="eqSliders"></div>
+  <svg id="eqGraph" class="eqgraph" viewBox="0 0 600 250"></svg>
+  <div class="eqband" id="eqBand" onchange="editBand()">
+    <span id="eqBandName"></span>
+    <select id="eqType">
+      <option value="peaking">Peak</option><option value="lowshelf">Low shelf</option><option value="highshelf">High shelf</option>
+      <option value="lowpass">Low pass</option><option value="highpass">High pass</option>
+    </select>
+    <label>Freq <input type="number" id="eqFreq" min="20" max="20000" step="1"> Hz</label>
+    <label>Gain <input type="number" id="eqGain" step="0.5"> dB</label>
+    <label>Q <input type="number" id="eqQ" min="0.1" max="10" step="0.1"></label>
+    <button onclick="removeBand()">Remove</button>
+  </div>
   <footer><button onclick="$('eq').close()">Close</button></footer>
 </dialog>
 
@@ -77,9 +90,10 @@ if (new URLSearchParams(location.search).has('overlay')) {
     if (e.target === document.body) window.webkit?.messageHandlers?.sonar?.postMessage('close');
   });
   // The overlay doesn't take the keyboard (a fullscreen game would minimize), except while typing:
-  // a click into a text field asks for it, a click anywhere else hands it back. Same around prompt().
+  // a click into a text field (or the EQ graph: arrow keys) asks for it, a click anywhere else hands it back.
+  // Same around prompt().
   const post = (m) => window.webkit?.messageHandlers?.sonar?.postMessage(m);
-  const isText = (el) => el.matches?.('input[type=text], input:not([type]), textarea');
+  const isText = (el) => el.closest?.('input[type=text], input[type=number], input:not([type]), textarea, .eqgraph, .bands');
   document.addEventListener('pointerdown', (e) => post(isText(e.target) ? 'keyboard' : 'nokeyboard'), true);
   const nativePrompt = window.prompt.bind(window);
   window.prompt = (...args) => {
@@ -100,7 +114,7 @@ let devices = [];
 let prefs = { meters: true };
 let sources = [];
 let channelsCache = [];
-let eqInfo = { bands: [], maxGain: 12, profiles: [] };
+let eqInfo = { maxGain: 12, profiles: [] };
 let eqChannel = null; // channel id the EQ dialog is editing
 let eqTimer;
 let cmTimer;
@@ -303,33 +317,237 @@ function addChannel() {
   if (!name) return;
   api('/api/channels', 'POST', { name }).then(() => { $('newName').value = ''; loadChannels(); }).catch(alert);
 }
-// --- EQ ---
+// --- EQ: 10 parametric bands, drawn and edited like GG Sonar ---
 async function loadEq() { eqInfo = await (await fetch('/api/eq')).json(); }
-const sameCurve = (a, b) => a.length === b.length && a.every((g, i) => Math.abs(g - b[i]) < 0.05);
-function matchProfile(gains) { return eqInfo.profiles.find(p => sameCurve(p.gains, gains)); }
-function profileName(gains) { return matchProfile(gains)?.name ?? 'Custom'; }
-function fmtHz(f) { return f >= 1000 ? f / 1000 + 'k' : f; }
+const sameBand = (a, b) => a.type === b.type && Math.abs(a.freq / b.freq - 1) < 0.005
+  && Math.abs(a.gain - b.gain) < 0.05 && Math.abs(a.q - b.q) < 0.005;
+const sameEq = (a, b) => a.length === b.length && a.every((band, i) => sameBand(band, b[i]));
+function matchProfile(bands) { return eqInfo.profiles.find(p => sameEq(p.bands, bands)); }
+function profileName(bands) { return matchProfile(bands)?.name ?? 'Custom'; }
+function fmtHz(f) { return f >= 1000 ? +(f / 1000).toFixed(f < 10000 ? 2 : 1) + 'k' : Math.round(f); }
 
+// Graph: log frequency (20 Hz–20 kHz) × dB. The curve is the real response of the filter-chain:
+// the RBJ cookbook biquad of each band (PipeWire's bq_* builtins), summed in dB.
+const EQ_FS = 48000, EQ_L = 46, EQ_R = 592, EQ_T = 30, EQ_B = 222;
+const EQ_REGIONS = [['Sub bass', 20, 60], ['Bass', 60, 250], ['Low mids', 250, 500], ['Mid range', 500, 2000],
+  ['Upper mids', 2000, 4000], ['Highs', 4000, 20000]];
+const hasGain = band => !band.type.endsWith('pass');
+let eqCur = [];   // bands being edited
+let eqSel = 0;    // selected band (shown in the editor row; hidden when there are no bands)
+const EQ_MAX_BANDS = 10; // EqBand.MAX_BANDS
+let eqView = 'curve'; // or 'sliders' (see drawSliders)
+try { eqView = localStorage.getItem('eqView') || eqView; } catch (e) {}
+function setEqView(view) {
+  eqView = view;
+  try { localStorage.setItem('eqView', view); } catch (e) {}
+  drawEq();
+}
+function addBand() {
+  eqCur.push({ type: 'peaking', freq: 1000, gain: 0, q: 1.41 });
+  eqSel = eqCur.length - 1;
+  bandChanged();
+}
+// Sliders view: the classic 10-band graphic EQ. Each slider shows the curve at its frequency; moving it shifts the
+// peaking point at exactly that frequency (created if missing: a new point restarts the EQ, a short blip) until the
+// curve hits the slider. That point's own response at its centre is its gain, so the shift is exact.
+const EQ_SLIDER_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]; // EqBand GRAPHIC_FREQS
+const sliderBand = f => eqCur.findIndex(b => b.type === 'peaking' && b.freq === f);
+const curveDb = f => eqCur.reduce((sum, b) => sum + bandDb(f, b), 0);
+function slideBand(f, target) {
+  const i = sliderBand(f), delta = target - curveDb(f);
+  if (i >= 0) return setBand(i, { gain: eqCur[i].gain + delta });
+  if (eqCur.length >= EQ_MAX_BANDS) return;
+  eqCur.push({ type: 'peaking', freq: f, gain: 0, q: 1.41 });
+  setBand(eqCur.length - 1, { gain: delta });
+}
+function drawSliders() {
+  const box = $('eqSliders');
+  if (!box.children.length) {
+    box.innerHTML = EQ_SLIDER_FREQS.map(f => `<label><span></span>
+      <input type="range" min="${-eqInfo.maxGain}" max="${eqInfo.maxGain}" step="0.1" oninput="slideBand(${f}, +this.value)">
+      <span>${fmtHz(f)}</span></label>`).join('') + '<p class="hint"></p>';
+  }
+  box.querySelectorAll('label').forEach((label, k) => {
+    const i = sliderBand(EQ_SLIDER_FREQS[k]), gain = Math.round(curveDb(EQ_SLIDER_FREQS[k]) * 10) / 10;
+    const input = label.querySelector('input');
+    input.value = gain;
+    input.disabled = i < 0 && eqCur.length >= EQ_MAX_BANDS;
+    label.querySelector('span').textContent = (gain > 0 ? '+' : '') + gain;
+    label.classList.toggle('sel', i >= 0 && i === eqSel);
+  });
+  const other = eqCur.filter(b => !(b.type === 'peaking' && EQ_SLIDER_FREQS.includes(b.freq))).length;
+  box.querySelector('p').textContent = other ? `+${other} more point${other > 1 ? 's' : ''} in the curve view` : '';
+}
+let eqDrag = null;
+const eqX = f => EQ_L + (EQ_R - EQ_L) * Math.log10(f / 20) / 3;
+const eqFreqAt = x => 20 * 10 ** (3 * (x - EQ_L) / (EQ_R - EQ_L));
+const eqY = db => EQ_T + (EQ_B - EQ_T) * (eqInfo.maxGain - db) / (2 * eqInfo.maxGain);
+const eqDbAt = y => eqInfo.maxGain - (y - EQ_T) / (EQ_B - EQ_T) * 2 * eqInfo.maxGain;
+function bandDb(f, { type, freq, gain, q }) {
+  if (hasGain({ type }) && !gain) return 0;
+  const A = 10 ** (gain / 40), w0 = 2 * Math.PI * freq / EQ_FS, cs = Math.cos(w0), al = Math.sin(w0) / (2 * q);
+  const sA = 2 * Math.sqrt(A) * al;
+  const [b, a] = {
+    peaking: [[1 + al * A, -2 * cs, 1 - al * A], [1 + al / A, -2 * cs, 1 - al / A]],
+    lowpass: [[(1 - cs) / 2, 1 - cs, (1 - cs) / 2], [1 + al, -2 * cs, 1 - al]],
+    highpass: [[(1 + cs) / 2, -(1 + cs), (1 + cs) / 2], [1 + al, -2 * cs, 1 - al]],
+    lowshelf: [[A * (A + 1 - (A - 1) * cs + sA), 2 * A * (A - 1 - (A + 1) * cs), A * (A + 1 - (A - 1) * cs - sA)],
+      [A + 1 + (A - 1) * cs + sA, -2 * (A - 1 + (A + 1) * cs), A + 1 + (A - 1) * cs - sA]],
+    highshelf: [[A * (A + 1 + (A - 1) * cs + sA), -2 * A * (A - 1 + (A + 1) * cs), A * (A + 1 + (A - 1) * cs - sA)],
+      [A + 1 - (A - 1) * cs + sA, 2 * (A - 1 - (A + 1) * cs), A + 1 - (A - 1) * cs - sA]],
+  }[type];
+  const w = 2 * Math.PI * f / EQ_FS;
+  const mag = ([c0, c1, c2]) => (c0 + c1 * Math.cos(w) + c2 * Math.cos(2 * w)) ** 2 + (c1 * Math.sin(w) + c2 * Math.sin(2 * w)) ** 2;
+  return 10 * Math.log10(mag(b) / mag(a));
+}
 function openEq(id) {
   eqChannel = id;
   const c = channelsCache.find(c => c.id === id);
   $('eqTitle').textContent = 'EQ — ' + c.name;
   $('eq').style.setProperty('--ch', channelAccentVar(c.sinkName));
-  $('eqBands').innerHTML = eqInfo.bands.map((f, i) => `
-    <label><span id="eqv-${i}"></span>
-      <input type="range" min="${-eqInfo.maxGain}" max="${eqInfo.maxGain}" step="0.5" value="${c.eq[i]}" oninput="bandChanged()" />
-      <span>${fmtHz(f)}</span></label>`).join('');
+  eqCur = c.eq.map(b => ({ ...b }));
+  const m = eqInfo.maxGain;
+  $('eqGraph').innerHTML =
+    EQ_REGIONS.map(([n, a, b]) => `<rect class="region" x="${eqX(a) + 1}" y="2" width="${eqX(b) - eqX(a) - 2}" height="20"/>
+      <text class="region" x="${(eqX(a) + eqX(b)) / 2}" y="16">${n}</text>`).join('') +
+    [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].map(f =>
+      `<line x1="${eqX(f)}" x2="${eqX(f)}" y1="${EQ_T}" y2="${EQ_B}"/><text class="hz" x="${eqX(f)}" y="${EQ_B + 18}">${fmtHz(f)}Hz</text>`).join('') +
+    [m, m / 2, 0, -m / 2, -m].map(db =>
+      `<line class="${db ? '' : 'zero'}" x1="${EQ_L}" x2="${EQ_R}" y1="${eqY(db)}" y2="${eqY(db)}"/><text class="db" x="${EQ_L - 6}" y="${eqY(db) + 4}">${db > 0 ? '+' : ''}${db} dB</text>`).join('') +
+    `<path id="eqCurve"/><g id="eqDots"></g><text id="eqTip" class="tip"></text>`;
+  eqSel = 0;
   bandChanged(false);
   $('eq').showModal();
 }
-function eqGains() { return [...$('eqBands').querySelectorAll('input')].map(i => +i.value); }
+function drawEq() {
+  $('eqGraph').toggleAttribute('hidden', eqView !== 'curve'); // an <svg> has no .hidden property
+  $('eqSliders').hidden = eqView !== 'sliders';
+  $('eqViewBtn').textContent = eqView === 'curve' ? 'Sliders' : 'Curve';
+  const pts = [];
+  for (let x = EQ_L; x <= EQ_R; x += 3) {
+    const db = curveDb(eqFreqAt(x));
+    pts.push(`${x},${Math.max(EQ_T, Math.min(EQ_B, eqY(db))).toFixed(1)}`);
+  }
+  $('eqCurve').setAttribute('d', 'M' + pts.join('L'));
+  const dots = $('eqDots');
+  if (dots.children.length !== eqCur.length) { // rebuilt only when bands come or go: keeps focus while editing
+    dots.innerHTML = eqCur.map((b, i) => `<circle class="band" data-i="${i}" r="7" tabindex="0"><title>Band ${i + 1}</title></circle>`).join('');
+  }
+  eqSel = Math.min(eqSel, eqCur.length - 1);
+  $('eqBand').hidden = eqSel < 0;
+  drawSliders();
+  dots.querySelectorAll('circle.band').forEach((dot, i) => {
+    dot.setAttribute('cx', eqX(eqCur[i].freq));
+    dot.setAttribute('cy', eqY(hasGain(eqCur[i]) ? eqCur[i].gain : 0));
+    dot.classList.toggle('sel', i === eqSel);
+  });
+  const b = eqCur[eqSel], tip = $('eqTip');
+  if (!b) {
+    tip.setAttribute('x', (EQ_L + EQ_R) / 2);
+    tip.setAttribute('y', eqY(0) - 14);
+    tip.textContent = 'Double-click to add a point';
+    return;
+  }
+  tip.textContent = eqDrag == null ? '' : `${fmtHz(b.freq)}Hz${hasGain(b) ? `  ${b.gain > 0 ? '+' : ''}${b.gain} dB` : ''}  Q ${b.q}`;
+  tip.setAttribute('x', Math.min(EQ_R - 70, Math.max(EQ_L + 70, eqX(b.freq))));
+  tip.setAttribute('y', hasGain(b) && b.gain > eqInfo.maxGain / 2 ? eqY(b.gain) + 24 : eqY(hasGain(b) ? b.gain : 0) - 14);
+  $('eqBandName').textContent = `Band ${eqSel + 1}`;
+  $('eqType').value = b.type;
+  $('eqFreq').value = Math.round(b.freq);
+  $('eqGain').value = b.gain;
+  $('eqGain').disabled = !hasGain(b);
+  $('eqQ').value = b.q;
+}
+function setBand(i, patch) {
+  const b = { ...eqCur[i], ...patch }, m = eqInfo.maxGain;
+  b.freq = Math.round(Math.max(20, Math.min(20000, b.freq)));
+  b.gain = Math.round(Math.max(-m, Math.min(m, b.gain)) * 10) / 10;
+  b.q = Math.round(Math.max(0.1, Math.min(10, b.q)) * 100) / 100;
+  eqCur[i] = b;
+  eqSel = i;
+  bandChanged();
+}
+function editBand() {
+  setBand(eqSel, { type: $('eqType').value, freq: +$('eqFreq').value, gain: +$('eqGain').value, q: +$('eqQ').value });
+}
+// drag a point (cut filters only move sideways), wheel = width (Q), double-click: on a point = gain back to 0,
+// elsewhere = add a point there. Focused point: arrow keys up/down gain, left/right frequency (a semitone), Delete removes it.
+function svgPoint(e) {
+  const r = $('eqGraph').getBoundingClientRect();
+  return [(e.clientX - r.left) * 600 / r.width, (e.clientY - r.top) * 250 / r.height];
+}
+function bandAt(e) {
+  const [x, y] = svgPoint(e);
+  let best = null, bestD = 24 ** 2;
+  eqCur.forEach((b, i) => {
+    const d = (eqX(b.freq) - x) ** 2 + (eqY(hasGain(b) ? b.gain : 0) - y) ** 2;
+    if (d < bestD) { best = i; bestD = d; }
+  });
+  return best;
+}
+const graph = $('eqGraph');
+graph.addEventListener('pointerdown', e => {
+  eqDrag = bandAt(e);
+  if (eqDrag == null) return;
+  eqSel = eqDrag;
+  graph.setPointerCapture(e.pointerId);
+  drawEq();
+});
+graph.addEventListener('pointermove', e => {
+  if (eqDrag == null) return;
+  const [x, y] = svgPoint(e);
+  setBand(eqDrag, hasGain(eqCur[eqDrag]) ? { freq: eqFreqAt(x), gain: eqDbAt(y) } : { freq: eqFreqAt(x) });
+});
+graph.addEventListener('pointerup', () => {
+  if (eqDrag == null) return;
+  const dot = graph.querySelector(`circle[data-i="${eqDrag}"]`);
+  eqDrag = null;
+  dot.focus();
+  drawEq();
+});
+graph.addEventListener('dblclick', e => {
+  const i = bandAt(e);
+  if (i != null) return setBand(i, { gain: 0 });
+  if (eqCur.length >= EQ_MAX_BANDS) return;
+  const [x, y] = svgPoint(e);
+  addBand();
+  setBand(eqCur.length - 1, { freq: eqFreqAt(x), gain: eqDbAt(y) });
+});
+function removeBand() {
+  eqCur.splice(eqSel, 1);
+  bandChanged();
+}
+graph.addEventListener('wheel', e => {
+  e.preventDefault();
+  const i = bandAt(e) ?? eqSel;
+  if (i < 0) return;
+  setBand(i, { q: eqCur[i].q * (e.deltaY < 0 ? 1.1 : 1 / 1.1) });
+}, { passive: false });
+graph.addEventListener('keydown', e => {
+  const i = e.target.dataset?.i;
+  if (i != null && (e.key === 'Delete' || e.key === 'Backspace')) {
+    eqSel = +i;
+    removeBand();
+    return;
+  }
+  const b = i != null && eqCur[i], semitone = 2 ** (1 / 12);
+  const patch = b && { ArrowUp: { gain: b.gain + 0.5 }, ArrowDown: { gain: b.gain - 0.5 },
+    ArrowRight: { freq: b.freq * semitone }, ArrowLeft: { freq: b.freq / semitone } }[e.key];
+  if (!patch) return;
+  e.preventDefault();
+  setBand(+i, patch);
+});
+graph.addEventListener('focusin', e => {
+  if (e.target.dataset?.i == null) return;
+  eqSel = +e.target.dataset.i;
+  drawEq();
+});
 function renderEqHeader() {
-  const gains = eqGains();
-  gains.forEach((g, i) => $('eqv-' + i).textContent = (g > 0 ? '+' : '') + g);
-  const match = matchProfile(gains);
+  const match = matchProfile(eqCur);
   $('eqProfile').innerHTML = (match ? '' : '<option value="" selected>Custom</option>') + eqInfo.profiles.map(p =>
     `<option value="${p.id}" ${p === match ? 'selected' : ''}>${esc(p.name)}${p.builtIn ? '' : ' ★'}</option>`).join('');
   $('eqDelete').disabled = !match || match.builtIn;
+  drawEq();
 }
 // send at most every 60 ms while dragging: each send is a live pw-cli set-param
 function bandChanged(send = true) {
@@ -337,30 +555,30 @@ function bandChanged(send = true) {
   if (!send) return;
   clearTimeout(eqTimer);
   eqTimer = setTimeout(() => {
-    const gains = eqGains();
-    api(`/api/channels/${eqChannel}/eq`, 'POST', { gains }).catch(alert);
-    channelsCache.find(c => c.id === eqChannel).eq = gains;
+    const bands = eqCur.map(b => ({ ...b }));
+    api(`/api/channels/${eqChannel}/eq`, 'POST', { bands }).catch(alert);
+    channelsCache.find(c => c.id === eqChannel).eq = bands;
     renderChannels();
   }, 60);
 }
 function pickProfile(id) {
   const p = eqInfo.profiles.find(p => p.id === +id);
   if (!p) return;
-  $('eqBands').querySelectorAll('input').forEach((input, i) => input.value = p.gains[i]);
+  eqCur = p.bands.map(b => ({ ...b }));
   bandChanged();
 }
 async function saveProfile() {
   const name = prompt('Profile name', '')?.trim();
   if (!name) return;
   try {
-    await api('/api/eq/profiles', 'POST', { name, gains: eqGains() });
+    await api('/api/eq/profiles', 'POST', { name, bands: eqCur });
     await loadEq();
     renderEqHeader();
     renderChannels();
   } catch (e) { alert(e.message); }
 }
 async function deleteProfile() {
-  const p = matchProfile(eqGains());
+  const p = matchProfile(eqCur);
   if (!p || p.builtIn || !confirm(`Delete profile "${p.name}"?`)) return;
   try {
     await api(`/api/eq/profiles/${p.id}`, 'DELETE');

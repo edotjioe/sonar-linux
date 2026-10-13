@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import dev.sonar.domain.AppAssignment;
+import dev.sonar.domain.EqBand;
 import dev.sonar.domain.EqProfile;
 import dev.sonar.domain.Preferences;
 import dev.sonar.pipewire.PipeWireModels.PhysicalSink;
@@ -65,14 +66,14 @@ public class MixerController {
 	}
 
 	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted,
-			String deviceName, String deviceDescription, int position, boolean active, boolean mic, double[] eq,
+			String deviceName, String deviceDescription, int position, boolean active, boolean mic, List<EqBand> eq,
 			boolean noiseSuppression, boolean deletable) {
 	}
 
-	public record EqView(int[] bands, double maxGain, List<EqProfile> profiles) {
+	public record EqView(double maxGain, List<EqProfile> profiles) {
 	}
 
-	public record EqBody(String name, double[] gains) {
+	public record EqBody(String name, List<EqBand> bands) {
 	}
 
 	/** autoChannel: the channel AppClassifier guesses, used while the app has no manual assignment. */
@@ -145,18 +146,18 @@ public class MixerController {
 
 	@PostMapping("/channels/{id}/eq")
 	public void eq(@PathVariable long id, @RequestBody EqBody body) {
-		mixer.setEq(id, body.gains());
+		mixer.setEq(id, body.bands());
 	}
 
 	@GetMapping("/eq")
 	public EqView eqProfiles() {
-		return new EqView(EqProfile.BANDS, EqProfile.MAX_GAIN, profiles.findAll());
+		return new EqView(EqBand.MAX_GAIN, profiles.findAll());
 	}
 
 	/** Create a custom profile, or overwrite the custom one with that name. */
 	@PostMapping("/eq/profiles")
 	public EqProfile saveProfile(@RequestBody EqBody body) {
-		return mixer.saveProfile(body.name(), body.gains());
+		return mixer.saveProfile(body.name(), body.bands());
 	}
 
 	@DeleteMapping("/eq/profiles/{id}")

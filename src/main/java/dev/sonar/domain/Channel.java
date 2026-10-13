@@ -1,5 +1,10 @@
 package dev.sonar.domain;
 
+import java.util.List;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -35,8 +40,13 @@ public class Channel {
 
 	private int position = 0;
 
-	/** Current EQ curve, one gain (dB) per {@link EqProfile#BANDS}; null (rows from before EQ) = flat. */
-	private double[] eq;
+	/** Before parametric bands: one gain per graphic band. Only read when eqBands is null. */
+	@Column(name = "eq")
+	private double[] legacyEq;
+
+	/** Current EQ; null (rows from before parametric bands) = converted from legacyEq. */
+	@JdbcTypeCode(SqlTypes.JSON)
+	private List<EqBand> eqBands;
 
 	/** Input channel (virtual mic) instead of an output channel. */
 	@Column(columnDefinition = "boolean default false")
@@ -82,12 +92,12 @@ public class Channel {
 		this.nullSinkModule = nullSinkModule;
 	}
 
-	public double[] getEq() {
-		return eq == null ? new double[EqProfile.BANDS.length] : eq;
+	public List<EqBand> getEq() {
+		return eqBands != null ? eqBands : EqBand.fromLegacy(legacyEq);
 	}
 
-	public void setEq(double[] eq) {
-		this.eq = eq;
+	public void setEq(List<EqBand> eq) {
+		this.eqBands = eq;
 	}
 
 	public String getDeviceName() {
