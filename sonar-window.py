@@ -49,6 +49,7 @@ class Sonar(Gtk.Application):
     def __init__(self):
         super().__init__(application_id='dev.sonar', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.main = self.overlay = self.overlay_view = self.obs = None
+        self.layer_shell = False  # the overlay is a layer-shell surface (its keyboard mode can change)
 
     def do_command_line(self, cmdline):
         # a second launch doesn't start a new process: its arguments arrive here, in the running one
@@ -108,7 +109,21 @@ class Sonar(Gtk.Application):
             self.overlay_view.load_uri(OVERLAY_URL)
             self.overlay.show_all()
 
+    def on_message(self, _manager, result):
+        # from the overlay page: 'close' (backdrop clicked), 'keyboard' / 'nokeyboard' (typing starts / ends)
+        msg = result.get_js_value().to_string()
+        if msg == 'close':
+            self.hide_overlay()
+        elif msg in ('keyboard', 'nokeyboard'):
+            self.set_keyboard(msg == 'keyboard')
+
+    def set_keyboard(self, on):
+        if self.layer_shell:
+            GtkLayerShell.set_keyboard_mode(
+                self.overlay, GtkLayerShell.KeyboardMode.EXCLUSIVE if on else GtkLayerShell.KeyboardMode.NONE)
+
     def hide_overlay(self, *_):
+        self.set_keyboard(False)
         self.overlay.hide()
         # destroy the page, not just blank it: stops its polling (level meters, the mic) and ends its
         # WebKit page process, ~100 MiB that would otherwise sit idle while the overlay is closed
@@ -130,11 +145,12 @@ class Sonar(Gtk.Application):
                          GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT):
                 GtkLayerShell.set_anchor(win, edge, True)
             GtkLayerShell.set_exclusive_zone(win, -1)  # cover panels too
-            # never take keyboard focus: fullscreen games (SDL, Wine/Proton) minimize when they lose it.
+            # no keyboard focus by default: fullscreen games (SDL, Wine/Proton) minimize when they lose it.
             # The mouse still works (pointer focus moves to the overlay, which also breaks a game's
-            # pointer lock); close with the hotkey or a backdrop click.
-            # ponytail: no keyboard in the overlay (no Esc, no typing): use the window to add/rename/save
+            # pointer lock); close with the hotkey or a backdrop click. The page asks for the keyboard
+            # only while you type in it (see on_message), so only typing risks minimizing the game.
             GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.NONE)
+            self.layer_shell = True
         else:
             # e.g. GNOME, or gtk-layer-shell not installed: best effort (a fullscreen game may minimize)
             win.fullscreen()
@@ -146,9 +162,8 @@ class Sonar(Gtk.Application):
     def make_overlay_view(self):
         view = web_view()
         view.set_background_color(Gdk.RGBA(0, 0, 0, 0))
-        # the page posts 'close' when the dimmed backdrop is clicked
         manager = view.get_user_content_manager()
-        manager.connect('script-message-received::sonar', self.hide_overlay)
+        manager.connect('script-message-received::sonar', self.on_message)
         manager.register_script_message_handler('sonar')
         return view
 

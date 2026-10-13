@@ -74,6 +74,16 @@ if (new URLSearchParams(location.search).has('overlay')) {
   document.body.addEventListener('click', (e) => {
     if (e.target === document.body) window.webkit?.messageHandlers?.sonar?.postMessage('close');
   });
+  // The overlay doesn't take the keyboard (a fullscreen game would minimize), except while typing:
+  // a click into a text field asks for it, a click anywhere else hands it back. Same around prompt().
+  const post = (m) => window.webkit?.messageHandlers?.sonar?.postMessage(m);
+  const isText = (el) => el.matches?.('input[type=text], input:not([type]), textarea');
+  document.addEventListener('pointerdown', (e) => post(isText(e.target) ? 'keyboard' : 'nokeyboard'), true);
+  const nativePrompt = window.prompt.bind(window);
+  window.prompt = (...args) => {
+    post('keyboard');
+    try { return nativePrompt(...args); } finally { post('nokeyboard'); }
+  };
   new ResizeObserver(fitSweep).observe(document.querySelector('main'));
   window.addEventListener('resize', fitSweep);
 }
