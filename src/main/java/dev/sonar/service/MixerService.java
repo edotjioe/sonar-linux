@@ -258,7 +258,8 @@ public class MixerService {
 	 */
 	public Channel applyChannel(Channel c) {
 		String device = c.getDeviceName();
-		if (device == null || device.isBlank()) {
+		// node names have no spaces; one that does is an error message an older version saved as the device
+		if (device == null || device.isBlank() || device.chars().anyMatch(Character::isWhitespace)) {
 			device = c.isMic() ? pw.defaultSource() : pw.defaultSink();
 		}
 		if (c.isMic()) {

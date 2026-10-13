@@ -657,4 +657,17 @@ class MixerServiceTest {
 
 		assertEquals("alsa_input.a", c.getDeviceName());
 	}
+
+	@Test
+	void applyChannelReplacesSavedErrorMessageWithDefaultOutput() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		c.setName("Game");
+		c.setDeviceName("Connection failure: Connection refused\npa_context_connect() failed: Connection refused");
+		when(pw.defaultSink()).thenReturn("alsa_output.speakers");
+
+		service.applyChannel(c);
+
+		assertEquals("alsa_output.speakers", c.getDeviceName());
+	}
 }

@@ -145,4 +145,20 @@ class PipeWireServiceTest {
 				""";
 		assertFalse(PipeWireService.isOutput(block));
 	}
+
+	@Test
+	void describeUsesPipeWireDescription() {
+		String block = """
+				51
+					Name: alsa_input.pci-0000_00_1f.3.analog-stereo
+					Description: Built-in Audio Analog Stereo
+				""";
+		assertEquals("Built-in Audio Analog Stereo",
+				PipeWireService.describe(block, "alsa_input.pci-0000_00_1f.3.analog-stereo"));
+	}
+
+	@Test
+	void describeFallsBackToTidiedName() {
+		assertEquals("usb mic mono", PipeWireService.describe("Name: alsa_input.usb_mic.mono", "alsa_input.usb_mic.mono"));
+	}
 }

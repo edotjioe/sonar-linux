@@ -316,11 +316,12 @@ public class PipeWireService {
 
 	public List<PhysicalSink> listPhysicalSinks() {
 		List<PhysicalSink> out = new ArrayList<>();
-		for (String name : indexToName("sinks").values()) {
-			if (name.startsWith("sonar_")) {
+		for (String block : run("pactl", "list", "sinks").out().split("(?m)^Sink #")) {
+			String name = grab(block, NAME);
+			if (name == null || name.startsWith("sonar_")) {
 				continue;
 			}
-			out.add(new PhysicalSink(name, prettify(name)));
+			out.add(new PhysicalSink(name, describe(block, name)));
 		}
 		return out;
 	}
@@ -332,13 +333,21 @@ public class PipeWireService {
 	public List<PhysicalSink> listPhysicalSources() {
 		List<PhysicalSink> out = new ArrayList<>();
 		for (String block : run("pactl", "list", "sources").out().split("(?m)^Source #")) {
-			String name = grab(block, Pattern.compile("(?m)^\\s*Name: (.+)$"));
+			String name = grab(block, NAME);
 			if (name == null || name.startsWith("sonar_") || isOutput(block)) {
 				continue;
 			}
-			out.add(new PhysicalSink(name, prettify(name)));
+			out.add(new PhysicalSink(name, describe(block, name)));
 		}
 		return out;
+	}
+
+	private static final Pattern NAME = Pattern.compile("(?m)^\\s*Name: (.+)$");
+
+	/** What the desktop calls a device (e.g. "Built-in Audio Analog Stereo"), else its node name tidied up. */
+	static String describe(String block, String name) {
+		String description = grab(block, Pattern.compile("(?m)^\\s*Description: (.+)$"));
+		return description != null && !description.isBlank() ? description.trim() : prettify(name);
 	}
 
 	/** A `pactl list sources` block that's an output's monitor rather than a mic. */
@@ -350,12 +359,16 @@ public class PipeWireService {
 				|| block.contains("device.class = \"monitor\"");
 	}
 
+	/** The default mic's node name, or "" when PipeWire can't be asked (not its error message). */
 	public String defaultSource() {
-		return run("pactl", "get-default-source").out().trim();
+		Result r = run("pactl", "get-default-source");
+		return r.exit() == 0 ? r.out().trim() : "";
 	}
 
+	/** The default output's node name, or "" when PipeWire can't be asked. */
 	public String defaultSink() {
-		return run("pactl", "get-default-sink").out().trim();
+		Result r = run("pactl", "get-default-sink");
+		return r.exit() == 0 ? r.out().trim() : "";
 	}
 
 	public void moveInput(int inputIndex, String sinkName) {
