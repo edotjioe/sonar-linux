@@ -1,5 +1,6 @@
 package dev.sonar.service;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -294,6 +295,19 @@ class MixerServiceTest {
 
 		assertThrows(IllegalArgumentException.class, () -> service.setEq(1L, null));
 		assertThrows(IllegalArgumentException.class, () -> service.setEq(1L, eleven));
+	}
+
+	@Test
+	void setToneClampsAndAppendsToneFilters() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		service.setTone(1L, new double[]{20, -3, 0});
+
+		assertArrayEquals(new double[]{12, -3, 0}, c.getTone());
+		verify(pw).setEqParams(eq("sonar_game"), eq(EqBand.tone(new double[]{12, -3, 0})));
+		assertThrows(IllegalArgumentException.class, () -> service.setTone(1L, new double[]{1, 2}));
 	}
 
 	@Test

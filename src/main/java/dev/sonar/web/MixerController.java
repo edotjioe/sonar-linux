@@ -66,7 +66,7 @@ public class MixerController {
 	}
 
 	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted,
-			String deviceName, String deviceDescription, int position, boolean active, boolean mic, List<EqBand> eq,
+			String deviceName, String deviceDescription, int position, boolean active, boolean mic, List<EqBand> eq, double[] tone,
 			boolean noiseSuppression, boolean deletable) {
 	}
 
@@ -74,6 +74,9 @@ public class MixerController {
 	}
 
 	public record EqBody(String name, List<EqBand> bands) {
+	}
+
+	public record ToneBody(double[] tone) {
 	}
 
 	/** autoChannel: the channel AppClassifier guesses, used while the app has no manual assignment. */
@@ -93,7 +96,7 @@ public class MixerController {
 		return mixer.listChannels().stream().map(c -> new ChannelView(
 				c.getId(), c.getName(), c.getSinkName(), c.getVolume(), c.isMuted(),
 				c.getDeviceName(), desc.getOrDefault(c.getDeviceName(), c.getDeviceName()),
-				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(),
+				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(), c.getTone(),
 				c.isNoiseSuppression(), mixer.isDeletable(c))).toList();
 	}
 
@@ -147,6 +150,11 @@ public class MixerController {
 	@PostMapping("/channels/{id}/eq")
 	public void eq(@PathVariable long id, @RequestBody EqBody body) {
 		mixer.setEq(id, body.bands());
+	}
+
+	@PostMapping("/channels/{id}/tone")
+	public void tone(@PathVariable long id, @RequestBody ToneBody body) {
+		mixer.setTone(id, body.tone());
 	}
 
 	@GetMapping("/eq")

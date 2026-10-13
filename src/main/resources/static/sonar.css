@@ -136,6 +136,10 @@ dialog .bands label { margin: 0; }
 .bands input { writing-mode: vertical-lr; direction: rtl; height: 150px; width: 100%; accent-color: var(--ch, var(--accent)); }
 .bands span { display: block; font-family: var(--font-mono); font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .bands label.sel span { color: var(--text); }
+.eqtone { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: -6px 0 16px; font-size: 13px; color: var(--dim); }
+dialog .eqtone label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.eqtone input { min-width: 0; } /* range inputs and grid columns don't shrink below their natural width by default */
+.eqtone span { flex: none; width: 52px; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .eqband { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: -6px 0 16px; font-size: 13px; color: var(--dim); }
 .eqband #eqBandName { font-family: var(--font-display); text-transform: uppercase; color: var(--text); }
 dialog .eqband label { display: inline-flex; align-items: center; gap: 6px; margin: 0; }

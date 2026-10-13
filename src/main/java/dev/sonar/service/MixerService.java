@@ -1,6 +1,7 @@
 package dev.sonar.service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -236,11 +237,27 @@ public class MixerService {
 				.equals(checked.stream().map(EqBand::type).toList());
 		c.setEq(checked);
 		if (sameTypes) {
-			pw.setEqParams(c.getSinkName(), checked);
+			pw.setEqParams(c.getSinkName(), chain(c));
 		} else {
 			restartEq(c);
 		}
 		return channels.save(c);
+	}
+
+	/** Set a channel's Bass/Voice/Treble (dB, clamped to ±MAX_GAIN); applied live. */
+	public Channel setTone(long id, double[] tone) {
+		Channel c = require(id);
+		if (tone == null || tone.length != 3) {
+			throw new IllegalArgumentException("Tone needs 3 gains: bass, voice, treble");
+		}
+		c.setTone(Arrays.stream(tone).map(g -> Math.max(-EqBand.MAX_GAIN, Math.min(EqBand.MAX_GAIN, g))).toArray());
+		pw.setEqParams(c.getSinkName(), chain(c));
+		return channels.save(c);
+	}
+
+	/** What the EQ process runs: the channel's bands, then the tone filters. */
+	private static List<EqBand> chain(Channel c) {
+		return Stream.concat(c.getEq().stream(), EqBand.tone(c.getTone()).stream()).toList();
 	}
 
 	/** Create or overwrite a custom profile by name. Presets are read-only. */
@@ -308,7 +325,7 @@ public class MixerService {
 	}
 
 	private void startEq(Channel c) {
-		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), c.getEq(), c.isMic(), c.isNoiseSuppression());
+		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), chain(c), c.isMic(), c.isNoiseSuppression());
 	}
 
 	/** After a setting the EQ process is built from changed: restart it, unless it's the mic's and that's off. */

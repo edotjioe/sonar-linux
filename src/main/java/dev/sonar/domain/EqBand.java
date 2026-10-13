@@ -26,6 +26,15 @@ public record EqBand(String type, double freq, double gain, double q) {
 				.mapToObj(i -> new EqBand("peaking", GRAPHIC_FREQS[i], i < gains.length ? gains[i] : 0, 1.41)).toList();
 	}
 
+	/**
+	 * GG's Bass/Voice/Treble sliders: fixed filters after the bands, gains[0..2] each. Always in the chain, so moving
+	 * them never restarts the EQ. index.html draws the same three (EQ_TONE).
+	 */
+	public static List<EqBand> tone(double[] gains) {
+		return List.of(new EqBand("lowshelf", 100, gains[0], 0.71), new EqBand("peaking", 2000, gains[1], 0.7),
+				new EqBand("highshelf", 6000, gains[2], 0.71));
+	}
+
 	/** A row saved before parametric bands: its graphic EQ minus the 0 dB bands (they do nothing). null = flat. */
 	public static List<EqBand> fromLegacy(double[] gains) {
 		return gains == null ? List.of() : graphic(gains).stream().filter(b -> b.gain() != 0).toList();

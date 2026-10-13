@@ -48,6 +48,9 @@ public class Channel {
 	@JdbcTypeCode(SqlTypes.JSON)
 	private List<EqBand> eqBands;
 
+	/** Bass, Voice, Treble gains (dB), see {@link EqBand#tone}; null (older rows) = all 0. */
+	private double[] tone;
+
 	/** Input channel (virtual mic) instead of an output channel. */
 	@Column(columnDefinition = "boolean default false")
 	private boolean mic = false;
@@ -94,6 +97,14 @@ public class Channel {
 
 	public List<EqBand> getEq() {
 		return eqBands != null ? eqBands : EqBand.fromLegacy(legacyEq);
+	}
+
+	public double[] getTone() {
+		return tone == null ? new double[3] : tone;
+	}
+
+	public void setTone(double[] tone) {
+		this.tone = tone;
 	}
 
 	public void setEq(List<EqBand> eq) {

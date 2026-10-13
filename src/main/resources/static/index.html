@@ -78,6 +78,11 @@
     <label>Q <input type="number" id="eqQ" min="0.1" max="10" step="0.1"></label>
     <button onclick="removeBand()">Remove</button>
   </div>
+  <div class="eqtone" oninput="toneChanged()">
+    <label>Bass <input type="range" min="-12" max="12" step="0.5"> <span></span></label>
+    <label>Voice <input type="range" min="-12" max="12" step="0.5"> <span></span></label>
+    <label>Treble <input type="range" min="-12" max="12" step="0.5"> <span></span></label>
+  </div>
   <footer><button onclick="$('eq').close()">Close</button></footer>
 </dialog>
 
@@ -93,7 +98,7 @@ if (new URLSearchParams(location.search).has('overlay')) {
   // a click into a text field (or the EQ graph: arrow keys) asks for it, a click anywhere else hands it back.
   // Same around prompt().
   const post = (m) => window.webkit?.messageHandlers?.sonar?.postMessage(m);
-  const isText = (el) => el.closest?.('input[type=text], input[type=number], input:not([type]), textarea, .eqgraph, .bands');
+  const isText = (el) => el.closest?.('input[type=text], input[type=number], input:not([type]), textarea, .eqgraph, .bands, .eqtone');
   document.addEventListener('pointerdown', (e) => post(isText(e.target) ? 'keyboard' : 'nokeyboard'), true);
   const nativePrompt = window.prompt.bind(window);
   window.prompt = (...args) => {
@@ -337,6 +342,20 @@ const EQ_COLORS = ['#8b5cf6', '#5b6cff', '#ff4f8b', '#ff5a5a', '#ff7a59', '#ffa6
 let eqCur = [];   // bands being edited
 let eqSel = 0;    // selected band (shown in the editor row; hidden when there are no bands)
 const EQ_MAX_BANDS = 10; // EqBand.MAX_BANDS
+// Bass/Voice/Treble: fixed filters after the bands (EqBand.tone), drawn into the curve, sent separately
+const EQ_TONE = [{ type: 'lowshelf', freq: 100, q: 0.71 }, { type: 'peaking', freq: 2000, q: 0.7 },
+  { type: 'highshelf', freq: 6000, q: 0.71 }];
+let eqTone = [0, 0, 0], eqToneTimer;
+function toneChanged() {
+  eqTone = [...document.querySelectorAll('.eqtone input')].map(i => +i.value);
+  drawEq();
+  clearTimeout(eqToneTimer);
+  eqToneTimer = setTimeout(() => {
+    const tone = [...eqTone];
+    api(`/api/channels/${eqChannel}/tone`, 'POST', { tone }).catch(alert);
+    channelsCache.find(c => c.id === eqChannel).tone = tone;
+  }, 60);
+}
 let eqView = 'curve'; // or 'sliders' (see drawSliders)
 try { eqView = localStorage.getItem('eqView') || eqView; } catch (e) {}
 function setEqView(view) {
@@ -354,7 +373,8 @@ function addBand() {
 // curve hits the slider. That point's own response at its centre is its gain, so the shift is exact.
 const EQ_SLIDER_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]; // EqBand GRAPHIC_FREQS
 const sliderBand = f => eqCur.findIndex(b => b.type === 'peaking' && b.freq === f);
-const curveDb = f => eqCur.reduce((sum, b) => sum + bandDb(f, b), 0);
+const curveDb = f => eqCur.reduce((sum, b) => sum + bandDb(f, b), 0)
+  + EQ_TONE.reduce((sum, b, k) => sum + bandDb(f, { ...b, gain: eqTone[k] }), 0);
 function slideBand(f, target) {
   const i = sliderBand(f), delta = target - curveDb(f);
   if (i >= 0) return setBand(i, { gain: eqCur[i].gain + delta });
@@ -411,6 +431,7 @@ function openEq(id) {
   $('eqTitle').textContent = 'EQ — ' + c.name;
   $('eq').style.setProperty('--ch', channelAccentVar(c.sinkName));
   eqCur = c.eq.map(b => ({ ...b }));
+  eqTone = [...c.tone];
   const m = eqInfo.maxGain;
   $('eqGraph').innerHTML =
     EQ_REGIONS.map(([n, a, b]) => `<rect class="region" x="${eqX(a) + 1}" y="2" width="${eqX(b) - eqX(a) - 2}" height="20"/>
@@ -437,6 +458,10 @@ function drawEq() {
     pts.push(`${x},${Math.max(EQ_T, Math.min(EQ_B, eqY(db))).toFixed(1)}`);
   }
   $('eqCurve').setAttribute('d', 'M' + pts.join('L'));
+  document.querySelectorAll('.eqtone label').forEach((label, k) => {
+    label.querySelector('input').value = eqTone[k];
+    label.querySelector('span').textContent = eqTone[k].toFixed(1) + ' dB';
+  });
   const dots = $('eqDots');
   if (dots.children.length !== eqCur.length) { // rebuilt only when bands come or go: keeps focus while editing
     dots.innerHTML = eqCur.map((b, i) => `<circle class="band" data-i="${i}" r="5" tabindex="0" style="fill: ${EQ_COLORS[i % EQ_COLORS.length]}"><title>Band ${i + 1}</title></circle>`).join('');
