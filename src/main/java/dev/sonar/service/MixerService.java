@@ -38,6 +38,9 @@ public class MixerService {
 	@Value("${sonar.default-channels:Game,Chat,Media,Aux}")
 	private String defaultChannels = "Game,Chat,Media,Aux";
 
+	/** The mic may be boosted past 100% (software gain), for quiet mics; outputs stop at 100%. */
+	static final int MIC_MAX_VOLUME = 200;
+
 	/** ChatMix balances these two channels; by sink name, which survives a rename. */
 	static final String GAME_SINK = sinkNameFor("Game");
 	static final String CHAT_SINK = sinkNameFor("Chat");
@@ -159,7 +162,7 @@ public class MixerService {
 
 	public Channel setVolume(long id, int volume) {
 		Channel c = require(id);
-		c.setVolume(Math.max(0, Math.min(100, volume)));
+		c.setVolume(Math.max(0, Math.min(c.isMic() ? MIC_MAX_VOLUME : 100, volume)));
 		pw.setVolume(c.getSinkName(), effectiveVolume(c), c.isMic());
 		return channels.save(c);
 	}

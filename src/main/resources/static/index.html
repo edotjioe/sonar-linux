@@ -195,7 +195,7 @@ function renderChannels() {
         </div>
       </header>
       <div class="row">
-        <input type="range" min="0" max="100" value="${c.volume}" oninput="this.nextElementSibling.textContent=this.value" onchange="setVolume(${c.id}, this.value)" />
+        <input type="range" min="0" max="${c.mic ? 200 : 100}" value="${c.volume}" oninput="this.nextElementSibling.textContent=this.value" onchange="setVolume(${c.id}, this.value)" />
         <span class="val">${c.volume}</span>
       </div>
       <div class="meter"><div id="lvl-${c.id}"></div></div>

@@ -181,6 +181,22 @@ class MixerServiceTest {
 	}
 
 	@Test
+	void micVolumeClampsToMixerMax() {
+		Channel c = channel(1L);
+		c.setMic(true);
+		c.setSinkName("sonar_mic");
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		service.setVolume(1L, 150);
+		assertEquals(150, c.getVolume());
+		verify(pw).setVolume("sonar_mic", 150, true);
+
+		service.setVolume(1L, 250);
+		assertEquals(200, c.getVolume());
+		verify(pw).setVolume("sonar_mic", 200, true);
+	}
+
+	@Test
 	void mixedScalesGameAndChat() {
 		assertEquals(80, MixerService.mixed(80, "sonar_game", 0));
 		assertEquals(40, MixerService.mixed(80, "sonar_game", 50));
