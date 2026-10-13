@@ -261,6 +261,9 @@ public class MixerService {
 		if (device == null || device.isBlank()) {
 			device = c.isMic() ? pw.defaultSource() : pw.defaultSink();
 		}
+		if (c.isMic()) {
+			device = realMic(device);
+		}
 		c.setDeviceName(device);
 		c.setNullSinkModule(c.isMic()
 				? pw.loadVirtualSource(c.getSinkName(), c.getName())
@@ -271,6 +274,20 @@ public class MixerService {
 		pw.setVolume(c.getSinkName(), effectiveVolume(c), c.isMic());
 		pw.setMute(c.getSinkName(), c.isMuted(), c.isMic());
 		return channels.save(c);
+	}
+
+	/**
+	 * The mic input to use: `device`, unless that's an output's monitor (the default source can be, e.g.
+	 * when no mic is plugged in), then the default mic or the first one. A mic that's merely unplugged
+	 * is kept, so the choice survives a reboot without it.
+	 */
+	private String realMic(String device) {
+		List<String> mics = pw.listPhysicalSources().stream().map(m -> m.name()).toList();
+		if (mics.isEmpty() || mics.contains(device) || !pw.indexToName("sources").containsValue(device)) {
+			return device;
+		}
+		String def = pw.defaultSource();
+		return mics.contains(def) ? def : mics.get(0);
 	}
 
 	private void startEq(Channel c) {

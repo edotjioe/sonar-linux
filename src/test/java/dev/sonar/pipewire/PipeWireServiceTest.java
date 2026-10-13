@@ -83,4 +83,66 @@ class PipeWireServiceTest {
 		assertFalse(conf.contains("ladspa"));
 		assertFalse(conf.contains("ns:Output"));
 	}
+
+	@Test
+	void isOutputTrueForMonitorSource() {
+		String block = """
+				75
+					Name: alsa_output.pci-0000_03_00.1.hdmi-stereo.monitor
+					Monitor of Sink: alsa_output.pci-0000_03_00.1.hdmi-stereo
+					Properties:
+						device.class = "monitor"
+						media.class = "Audio/Sink"
+				""";
+		assertTrue(PipeWireService.isOutput(block));
+	}
+
+	@Test
+	void isOutputFalseForRealMic() {
+		String block = """
+				83
+					Name: alsa_input.usb-SteelSeries_Arctis_Nova_Pro_Wireless-00.mono-fallback
+					Monitor of Sink: n/a
+					Properties:
+						device.class = "sound"
+						media.class = "Audio/Source"
+				""";
+		assertFalse(PipeWireService.isOutput(block));
+	}
+
+	@Test
+	void isOutputTrueWhenMonitorOfSinkNamed() {
+		String block = """
+				77
+					Name: speakers_loopback
+					Monitor of Sink: alsa_output.speakers
+					Properties:
+						media.class = "Audio/Source"
+				""";
+		assertTrue(PipeWireService.isOutput(block));
+	}
+
+	@Test
+	void isOutputTrueWhenMediaClassIsSink() {
+		String block = """
+				88
+					Name: alsa_output.usb-Generic_USB_Audio.monitor
+					Monitor of Sink: n/a
+					Properties:
+						media.class = "Audio/Sink"
+				""";
+		assertTrue(PipeWireService.isOutput(block));
+	}
+
+	@Test
+	void isOutputFalseForVirtualSource() {
+		String block = """
+				90
+					Name: virtual_mic
+					Monitor of Sink: n/a
+					Properties:
+						media.class = "Audio/Source/Virtual"
+				""";
+		assertFalse(PipeWireService.isOutput(block));
+	}
 }

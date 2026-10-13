@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +30,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import dev.sonar.domain.Channel;
 import dev.sonar.domain.EqProfile;
 import dev.sonar.domain.Preferences;
+import dev.sonar.pipewire.PipeWireModels;
 import dev.sonar.pipewire.PipeWireService;
 import dev.sonar.repo.AppAssignmentRepository;
 import dev.sonar.repo.ChannelRepository;
@@ -580,5 +582,79 @@ class MixerServiceTest {
 		service.setMicMuted(false);
 
 		verify(pw, never()).setMute(anyString(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void applyChannelMicReplacesMonitorDeviceWithDefaultMic() {
+		Channel c = channel(1L);
+		c.setMic(true);
+		c.setSinkName("sonar_mic");
+		c.setName("Mic");
+		c.setDeviceName("alsa_output.x.monitor");
+		when(pw.indexToName("sources"))
+				.thenReturn(Map.of(0, "alsa_output.x.monitor", 1, "alsa_input.a", 2, "alsa_input.b"));
+		when(pw.listPhysicalSources())
+				.thenReturn(List.of(new PipeWireModels.PhysicalSink("alsa_input.a", "a"),
+						new PipeWireModels.PhysicalSink("alsa_input.b", "b")));
+		when(pw.defaultSource()).thenReturn("alsa_input.b");
+
+		service.applyChannel(c);
+
+		assertEquals("alsa_input.b", c.getDeviceName());
+	}
+
+	@Test
+	void applyChannelMicFallsBackToFirstPhysicalWhenDefaultIsMonitor() {
+		Channel c = channel(1L);
+		c.setMic(true);
+		c.setSinkName("sonar_mic");
+		c.setName("Mic");
+		c.setDeviceName("alsa_output.x.monitor");
+		when(pw.indexToName("sources"))
+				.thenReturn(Map.of(0, "alsa_output.x.monitor", 1, "alsa_input.a", 2, "alsa_input.b"));
+		when(pw.listPhysicalSources())
+				.thenReturn(List.of(new PipeWireModels.PhysicalSink("alsa_input.a", "a"),
+						new PipeWireModels.PhysicalSink("alsa_input.b", "b")));
+		when(pw.defaultSource()).thenReturn("alsa_output.x.monitor");
+
+		service.applyChannel(c);
+
+		assertEquals("alsa_input.a", c.getDeviceName());
+	}
+
+	@Test
+	void applyChannelMicKeepsUnpluggedDevice() {
+		Channel c = channel(1L);
+		c.setMic(true);
+		c.setSinkName("sonar_mic");
+		c.setName("Mic");
+		c.setDeviceName("alsa_input.usb-gone");
+		when(pw.indexToName("sources")).thenReturn(Map.of(0, "alsa_input.a", 1, "alsa_input.b"));
+		when(pw.listPhysicalSources())
+				.thenReturn(List.of(new PipeWireModels.PhysicalSink("alsa_input.a", "a"),
+						new PipeWireModels.PhysicalSink("alsa_input.b", "b")));
+		lenient().when(pw.defaultSource()).thenReturn("alsa_input.a");
+
+		service.applyChannel(c);
+
+		assertEquals("alsa_input.usb-gone", c.getDeviceName());
+	}
+
+	@Test
+	void applyChannelMicKeepsPhysicalDevice() {
+		Channel c = channel(1L);
+		c.setMic(true);
+		c.setSinkName("sonar_mic");
+		c.setName("Mic");
+		c.setDeviceName("alsa_input.a");
+		lenient().when(pw.indexToName("sources")).thenReturn(Map.of(0, "alsa_input.a", 1, "alsa_input.b"));
+		when(pw.listPhysicalSources())
+				.thenReturn(List.of(new PipeWireModels.PhysicalSink("alsa_input.a", "a"),
+						new PipeWireModels.PhysicalSink("alsa_input.b", "b")));
+		lenient().when(pw.defaultSource()).thenReturn("alsa_input.a");
+
+		service.applyChannel(c);
+
+		assertEquals("alsa_input.a", c.getDeviceName());
 	}
 }

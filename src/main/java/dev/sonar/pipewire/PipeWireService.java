@@ -325,16 +325,29 @@ public class PipeWireService {
 		return out;
 	}
 
-	/** Physical mics: every source except sink monitors and our own virtual mic. */
+	/**
+	 * Physical mics: every source except our own virtual mic and outputs' monitors. A monitor is told
+	 * apart by what PipeWire says it is, not by its name: not every system names them "*.monitor".
+	 */
 	public List<PhysicalSink> listPhysicalSources() {
 		List<PhysicalSink> out = new ArrayList<>();
-		for (String name : indexToName("sources").values()) {
-			if (name.startsWith("sonar_") || name.endsWith(".monitor")) {
+		for (String block : run("pactl", "list", "sources").out().split("(?m)^Source #")) {
+			String name = grab(block, Pattern.compile("(?m)^\\s*Name: (.+)$"));
+			if (name == null || name.startsWith("sonar_") || isOutput(block)) {
 				continue;
 			}
 			out.add(new PhysicalSink(name, prettify(name)));
 		}
 		return out;
+	}
+
+	/** A `pactl list sources` block that's an output's monitor rather than a mic. */
+	static boolean isOutput(String block) {
+		String monitorOf = grab(block, Pattern.compile("(?m)^\\s*Monitor of Sink: (.+)$"));
+		String mediaClass = grab(block, Pattern.compile("media\\.class = \"([^\"]*)\""));
+		return (monitorOf != null && !monitorOf.trim().equals("n/a"))
+				|| (mediaClass != null && mediaClass.contains("Sink"))
+				|| block.contains("device.class = \"monitor\"");
 	}
 
 	public String defaultSource() {

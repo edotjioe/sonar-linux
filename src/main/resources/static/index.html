@@ -195,7 +195,7 @@ function renderChannels() {
       </select>
       <button class="eqbtn" onclick="openEq(${c.id})">EQ: ${esc(profileName(c.eq))}</button>
       ${c.mic ? `<label class="nsbtn" title="Remove background noise (keyboard, fans) with rnnoise"><input type="checkbox" ${c.noiseSuppression ? 'checked' : ''} onchange="setNoise(${c.id}, this.checked)" /> Noise suppression</label>` : ''}
-      <div class="devlabel">${c.active ? '● live' : '○ offline'} — ${esc(c.sinkName)}</div>
+      <div class="devlabel">${c.active ? '<span class="live-dot">●</span> live' : '○ offline'} — ${esc(c.sinkName)}</div>
     </div>`).join('');
 }
 
