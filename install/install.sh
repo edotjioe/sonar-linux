@@ -6,11 +6,18 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 APPS=$HOME/.local/share/applications
 UNITS=$HOME/.config/systemd/user
 
+# Java 21: $JAVA_HOME, else the one on PATH, else a JDK unpacked in ~/.local/share/jdk-21 (e.g. on Bazzite)
+JAVA=${JAVA_HOME:+$JAVA_HOME/bin/java}
+[ -x "$JAVA" ] || JAVA=$(command -v java || true)
+[ -x "$JAVA" ] || JAVA=$HOME/.local/share/jdk-21/bin/java
+[ -x "$JAVA" ] || { echo "Java 21 not found: set JAVA_HOME, or unpack a JDK into ~/.local/share/jdk-21" >&2; exit 1; }
+export JAVA_HOME=${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$JAVA")")")}  # for ./mvnw
+
 [ -f "$REPO/target/sonar.jar" ] || (cd "$REPO" && ./mvnw -q package -DskipTests)
 
 mkdir -p "$UNITS" "$APPS" "$HOME/.local/share/icons/hicolor/256x256/apps"
 # the templates say @REPO@ wherever the repo's path goes
-sed "s#@REPO@#$REPO#g" "$REPO/install/sonar.service" > "$UNITS/sonar.service"
+sed -e "s#@REPO@#$REPO#g" -e "s#@JAVA@#$JAVA#g" "$REPO/install/sonar.service" > "$UNITS/sonar.service"
 for f in dev.sonar.desktop dev.sonar.overlay.desktop; do
 	sed "s#@REPO@#$REPO#g" "$REPO/install/$f" > "$APPS/$f"
 done

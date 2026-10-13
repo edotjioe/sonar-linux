@@ -11,8 +11,12 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 gi.require_version('WebKit2', '4.1')
-gi.require_version('GtkLayerShell', '0.1')
-from gi.repository import Gdk, Gio, GLib, Gtk, GtkLayerShell, WebKit2
+from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2
+try:
+    gi.require_version('GtkLayerShell', '0.1')
+    from gi.repository import GtkLayerShell
+except (ValueError, ImportError):
+    GtkLayerShell = None  # not installed (e.g. stock Bazzite): the overlay falls back to a plain fullscreen window
 
 URL = 'http://localhost:8080/'
 OVERLAY_URL = URL + '?overlay=1'
@@ -117,7 +121,7 @@ class Sonar(Gtk.Application):
         # the hidden overlay window keeps this process alive (no Python/GTK cold start on the next toggle);
         # its page is created on show and destroyed on hide
         win = Gtk.Window(application=self, title='Sonar overlay')
-        if GtkLayerShell.is_supported():
+        if GtkLayerShell and GtkLayerShell.is_supported():
             # layer-shell (KDE, wlroots compositors): a layer above everything, fullscreen games included
             GtkLayerShell.init_for_window(win)
             GtkLayerShell.set_namespace(win, 'sonar')
@@ -132,7 +136,7 @@ class Sonar(Gtk.Application):
             # ponytail: no keyboard in the overlay (no Esc, no typing): use the window to add/rename/save
             GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.NONE)
         else:
-            # e.g. GNOME: no layer-shell, best effort
+            # e.g. GNOME, or gtk-layer-shell not installed: best effort (a fullscreen game may minimize)
             win.fullscreen()
             win.set_keep_above(True)
         win.set_visual(win.get_screen().get_rgba_visual())

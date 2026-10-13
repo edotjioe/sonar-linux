@@ -10,11 +10,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import dev.sonar.domain.EqProfile;
@@ -32,6 +35,11 @@ public class PipeWireService {
 	private record Result(int exit, String out) {
 	}
 
+	private static final Logger log = LoggerFactory.getLogger(PipeWireService.class);
+
+	/** Problems already logged: these commands run every second, so each distinct one is logged once. */
+	private final Set<String> warned = ConcurrentHashMap.newKeySet();
+
 	private Result run(String... cmd) {
 		try {
 			ProcessBuilder pb = new ProcessBuilder(cmd).redirectErrorStream(true);
@@ -39,9 +47,21 @@ public class PipeWireService {
 			Process p = pb.start();
 			String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 			int exit = p.waitFor();
+			if (exit != 0) {
+				warnOnce(cmd[0] + " " + cmd[1] + " failed (exit " + exit + "): " + out.strip().lines().findFirst().orElse(""));
+			}
 			return new Result(exit, out);
 		} catch (Exception e) {
+			// typically the tool isn't installed: everything then looks empty (no devices, channels offline)
+			warnOnce("Can't run " + cmd[0] + " (" + e.getMessage() + "); is it installed?"
+					+ " pactl comes with pulseaudio-utils on Fedora/Bazzite, libpulse on Arch");
 			return new Result(-1, "ERROR: " + e.getMessage());
+		}
+	}
+
+	private void warnOnce(String message) {
+		if (warned.add(message)) {
+			log.warn(message);
 		}
 	}
 
@@ -106,7 +126,9 @@ public class PipeWireService {
 	// ponytail: a dead EQ process isn't respawned (it only dies if PipeWire itself restarts,
 	// which takes the null-sinks down too); restart Sonar to recover.
 
-	private static final Path EQ_DIR = Path.of(System.getProperty("java.io.tmpdir"), "sonar-eq");
+	/** Per-user runtime dir (/run/user/<uid>, 0700): /tmp is shared, so another user's sonar-eq would block ours. */
+	private static final Path EQ_DIR = Path.of(System.getenv().getOrDefault("XDG_RUNTIME_DIR",
+			System.getProperty("java.io.tmpdir")), "sonar-eq");
 
 	private final Map<String, Process> eqProcesses = new ConcurrentHashMap<>();
 

@@ -7,7 +7,7 @@ Wants=pipewire-pulse.service
 WorkingDirectory=@REPO@
 # Small-app JVM: the default sizes for a big server (G1, heap up to 1/4 of RAM, both JIT tiers) cost
 # ~300 MiB more than Sonar needs; it uses ~70 MiB of heap and mostly waits on pactl.
-ExecStart=/usr/bin/java -Xms32m -Xmx128m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k \
+ExecStart=@JAVA@ -Xms32m -Xmx128m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k \
     -jar @REPO@/target/sonar.jar
 Restart=on-failure
 RestartSec=3

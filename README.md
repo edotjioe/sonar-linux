@@ -62,7 +62,7 @@ so this is the standard, robust approach:
 
 The EQ can't be a `pactl` module (`pipewire-pulse` doesn't offer `module-filter-chain`), and
 `pw-cli load-module` unloads a module when pw-cli exits, so each channel's EQ is its own
-long-lived `pipewire` process with a generated config in `$TMPDIR/sonar-eq/`. Each band is a
+long-lived `pipewire` process with a generated config in `$XDG_RUNTIME_DIR/sonar-eq/`. Each band is a
 built-in peaking biquad, so no LADSPA/LV2 plugins are needed.
 
 **Gotcha:** PipeWire module ids are ephemeral and reused. The app never trusts a persisted id
@@ -74,6 +74,20 @@ path and stopped the same way.
 
 - Linux with PipeWire + `pipewire-pulse` (provides `pactl`) and `pw-cli`/`pw-link`.
 - Java 21. No Maven install needed — the wrapper (`./mvnw`) is checked in.
+
+### Desktop window & overlay
+
+`sonar-window.py` needs PyGObject with GTK 3 and WebKitGTK 4.1 (`python-gobject` + `webkit2gtk-4.1`
+on Arch, `python3-gobject` + `webkit2gtk4.1` on Fedora). The overlay also wants **gtk-layer-shell**,
+which puts it on a layer above everything, fullscreen games included, without taking their focus.
+On Bazzite: `rpm-ostree install gtk-layer-shell`, then reboot.
+
+> **GNOME users:** GNOME doesn't implement layer-shell, so there the overlay falls back to a plain
+> fullscreen window that stays on top. It works on the desktop, but a fullscreen game may minimize
+> when it opens. The windowed mixer is unaffected. The same fallback applies anywhere
+> gtk-layer-shell isn't installed. The **Meta+S** hotkey is set up automatically on KDE only; on
+> GNOME, add a custom shortcut (Settings → Keyboard → Custom Shortcuts) running
+> `/path/to/sonar-window.py --toggle`.
 
 ### OBS
 
