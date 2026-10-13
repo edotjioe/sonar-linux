@@ -119,17 +119,20 @@ dialog.eq { width: min(620px, 94vw); --ch: var(--accent); }
   touch-action: none; user-select: none; cursor: ns-resize; }
 .eqgraph line { stroke: var(--line-soft); }
 .eqgraph line.zero { stroke: var(--line); }
+.eqgraph line.minor { stroke: var(--line-soft); opacity: .45; }
 .eqgraph text { font-family: var(--font-mono); font-size: 10px; fill: var(--dim); text-anchor: middle; }
 .eqgraph text.db { text-anchor: end; }
 .eqgraph rect.region { fill: var(--panel2); }
 .eqgraph text.region { font-family: var(--font-display); text-transform: uppercase; letter-spacing: .05em; }
-.eqgraph #eqCurve { fill: none; stroke: var(--ch); stroke-width: 2; }
-.eqgraph circle.band { fill: var(--ch); stroke: var(--bg); stroke-width: 2; outline: none; }
+.eqgraph #eqCurve { fill: none; stroke: var(--text); stroke-opacity: .85; stroke-width: 1.5; }
+.eqgraph circle.band { stroke: transparent; stroke-width: 2; outline: none; }
 .eqgraph circle.band:hover, .eqgraph circle.band.sel { stroke: var(--text); }
 .eqgraph text.tip { fill: var(--text); font-size: 12px; }
-.bands { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; text-align: center; margin-bottom: 16px; }
-dialog .bands .hint { flex-basis: 100%; margin: 0; }
-dialog .bands label { flex: 0 0 48px; margin: 0; }
+.bands { display: grid; grid-template-columns: repeat(10, 50px); gap: 6px; justify-content: center; text-align: center; margin-bottom: 16px; }
+.bands .region { background: var(--panel2); padding: 4px 2px; font-family: var(--font-display); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--dim); display: flex; align-items: center; justify-content: center; }
+dialog .bands .hint { grid-column: 1 / -1; margin: 0; }
+dialog .bands label { margin: 0; }
 .bands input { writing-mode: vertical-lr; direction: rtl; height: 150px; width: 100%; accent-color: var(--ch, var(--accent)); }
 .bands span { display: block; font-family: var(--font-mono); font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .bands label.sel span { color: var(--text); }

@@ -332,6 +332,8 @@ const EQ_FS = 48000, EQ_L = 46, EQ_R = 592, EQ_T = 30, EQ_B = 222;
 const EQ_REGIONS = [['Sub bass', 20, 60], ['Bass', 60, 250], ['Low mids', 250, 500], ['Mid range', 500, 2000],
   ['Upper mids', 2000, 4000], ['Highs', 4000, 20000]];
 const hasGain = band => !band.type.endsWith('pass');
+// one colour per point (by band index, so a point keeps its colour while dragged), as in GG
+const EQ_COLORS = ['#8b5cf6', '#5b6cff', '#ff4f8b', '#ff5a5a', '#ff7a59', '#ffa63d', '#c6f432', '#22d3a6', '#3ee0e0', '#38bdf8'];
 let eqCur = [];   // bands being edited
 let eqSel = 0;    // selected band (shown in the editor row; hidden when there are no bands)
 const EQ_MAX_BANDS = 10; // EqBand.MAX_BANDS
@@ -363,7 +365,10 @@ function slideBand(f, target) {
 function drawSliders() {
   const box = $('eqSliders');
   if (!box.children.length) {
-    box.innerHTML = EQ_SLIDER_FREQS.map(f => `<label><span></span>
+    box.innerHTML = EQ_REGIONS.map(([name, lo, hi]) => { // the same header as the curve, spanning its sliders
+      const n = EQ_SLIDER_FREQS.filter(f => f >= lo && f < hi).length;
+      return n ? `<div class="region" style="grid-column: span ${n}">${name}</div>` : '';
+    }).join('') + EQ_SLIDER_FREQS.map(f => `<label><span></span>
       <input type="range" min="${-eqInfo.maxGain}" max="${eqInfo.maxGain}" step="0.1" oninput="slideBand(${f}, +this.value)">
       <span>${fmtHz(f)}</span></label>`).join('') + '<p class="hint"></p>';
   }
@@ -410,6 +415,9 @@ function openEq(id) {
   $('eqGraph').innerHTML =
     EQ_REGIONS.map(([n, a, b]) => `<rect class="region" x="${eqX(a) + 1}" y="2" width="${eqX(b) - eqX(a) - 2}" height="20"/>
       <text class="region" x="${(eqX(a) + eqX(b)) / 2}" y="16">${n}</text>`).join('') +
+    [10, 100, 1000, 10000].flatMap(d => [3, 4, 6, 7, 8, 9].map(k => k * d)).filter(f => f > 20 && f < 20000).map(f =>
+      `<line class="minor" x1="${eqX(f)}" x2="${eqX(f)}" y1="${EQ_T}" y2="${EQ_B}"/>`).join('') +
+    [-9, -3, 3, 9].map(db => `<line class="minor" x1="${EQ_L}" x2="${EQ_R}" y1="${eqY(db)}" y2="${eqY(db)}"/>`).join('') +
     [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].map(f =>
       `<line x1="${eqX(f)}" x2="${eqX(f)}" y1="${EQ_T}" y2="${EQ_B}"/><text class="hz" x="${eqX(f)}" y="${EQ_B + 18}">${fmtHz(f)}Hz</text>`).join('') +
     [m, m / 2, 0, -m / 2, -m].map(db =>
@@ -431,7 +439,7 @@ function drawEq() {
   $('eqCurve').setAttribute('d', 'M' + pts.join('L'));
   const dots = $('eqDots');
   if (dots.children.length !== eqCur.length) { // rebuilt only when bands come or go: keeps focus while editing
-    dots.innerHTML = eqCur.map((b, i) => `<circle class="band" data-i="${i}" r="7" tabindex="0"><title>Band ${i + 1}</title></circle>`).join('');
+    dots.innerHTML = eqCur.map((b, i) => `<circle class="band" data-i="${i}" r="5" tabindex="0" style="fill: ${EQ_COLORS[i % EQ_COLORS.length]}"><title>Band ${i + 1}</title></circle>`).join('');
   }
   eqSel = Math.min(eqSel, eqCur.length - 1);
   $('eqBand').hidden = eqSel < 0;
