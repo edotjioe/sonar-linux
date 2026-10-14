@@ -70,7 +70,7 @@ dialog footer { display: flex; justify-content: flex-end; }
 .meter { height: 6px; background: var(--panel2); border: 1px solid var(--line); overflow: hidden; }
 .meter div { height: 100%; width: 0; background: var(--ch); transition: width 80ms linear; }
 .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
-input[type=range] { flex: 1; accent-color: var(--ch, var(--accent)); }
+input[type=range] { flex: 1; accent-color: var(--ch, var(--accent)); cursor: pointer; }
 .val { width: 38px; text-align: right; color: var(--dim); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 button { cursor: pointer; border: 1px solid var(--line); background: var(--panel2); color: var(--text);
   font-family: var(--font-body); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; padding: 5px 10px; }
