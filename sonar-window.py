@@ -4,6 +4,7 @@
 #   sonar-window.py --toggle  -> show/hide the full-screen overlay (bound to a global hotkey)
 # The mixer's OBS button (window.open) opens the OBS page in its own window.
 import json
+import os
 import sys
 import urllib.request
 
@@ -20,6 +21,14 @@ except (ValueError, ImportError):
 
 URL = 'http://localhost:8080/'
 OVERLAY_URL = URL + '?overlay=1'
+SCRIPT = os.path.abspath(__file__)
+
+
+def script_mtime():
+    try:
+        return os.stat(SCRIPT).st_mtime
+    except OSError:
+        return None
 
 
 def retry(view, _event, uri, err):
@@ -50,9 +59,12 @@ class Sonar(Gtk.Application):
         super().__init__(application_id='dev.sonar', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.main = self.overlay = self.overlay_view = self.obs = None
         self.layer_shell = False  # the overlay is a layer-shell surface (its keyboard mode can change)
+        self.started_mtime = script_mtime()  # this file as loaded; see restart_if_updated
 
     def do_command_line(self, cmdline):
         # a second launch doesn't start a new process: its arguments arrive here, in the running one
+        if self.restart_if_updated(cmdline.get_arguments()[1:]):
+            return 0
         if '--toggle' in cmdline.get_arguments()[1:]:
             if hotkey_opens() == 'window':
                 self.toggle_main()
@@ -61,6 +73,27 @@ class Sonar(Gtk.Application):
         else:
             self.show_main()
         return 0
+
+    def restart_if_updated(self, args):
+        """
+        This process lives for the whole session, so after an update it would keep running the old
+        script against the new page. When the file has changed and no window is showing, replace the
+        process with the new script, which then handles this launch's arguments itself.
+        """
+        mtime = script_mtime()
+        if mtime is None or mtime == self.started_mtime:
+            return False
+        if self.main or self.obs or (self.overlay and self.overlay.get_visible()):
+            return False  # don't close what's on screen; restart on a later launch
+        def exec_new():
+            # let the launching process get its reply first; exec closes our D-Bus connection, which
+            # frees the app id for the new process
+            conn = self.get_dbus_connection()
+            if conn:
+                conn.flush_sync(None)
+            os.execv(sys.executable, [sys.executable, SCRIPT, *args])
+        GLib.timeout_add(100, exec_new)
+        return True
 
     def show_main(self):
         if not self.main:
