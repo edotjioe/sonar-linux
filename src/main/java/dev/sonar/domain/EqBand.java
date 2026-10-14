@@ -6,12 +6,13 @@ import java.util.Set;
 import java.util.stream.IntStream;
 
 /**
- * One parametric EQ band: a filter-chain builtin biquad ({@code bq_<type>}). gain is ignored by lowpass/highpass.
+ * One parametric EQ band: a filter-chain builtin biquad ({@code bq_<type>}), which PipeWire computes with the RBJ Audio EQ
+ * Cookbook formulas (as index.html bandDb draws them). gain is ignored by lowpass/highpass/bandpass/notch.
  * Stored as JSON in its entity.
  */
 public record EqBand(String type, double freq, double gain, double q) {
 
-	public static final Set<String> TYPES = Set.of("peaking", "lowshelf", "highshelf", "lowpass", "highpass");
+	public static final Set<String> TYPES = Set.of("peaking", "lowshelf", "highshelf", "lowpass", "highpass", "bandpass", "notch");
 
 	/** An EQ has 0..MAX_BANDS bands. freq/gain/Q change live; adding/removing a band or changing a type restarts it. */
 	public static final int MAX_BANDS = 10;

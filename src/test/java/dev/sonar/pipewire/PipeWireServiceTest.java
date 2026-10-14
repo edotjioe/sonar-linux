@@ -38,6 +38,17 @@ class PipeWireServiceTest {
 	}
 
 	@Test
+	void eqConfNotchAndBandpassLabels() {
+		List<EqBand> bands = new ArrayList<>(EqBand.graphic(3.5));
+		bands.set(0, new EqBand("notch", 1000, 0, 5));
+		bands.set(1, new EqBand("bandpass", 2000, 0, 2));
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", bands, false, null);
+
+		assertTrue(conf.contains("label = bq_notch"));
+		assertTrue(conf.contains("label = bq_bandpass"));
+	}
+
+	@Test
 	void eqConfMic() {
 		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", EqBand.graphic(), true, null);
 

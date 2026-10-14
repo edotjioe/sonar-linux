@@ -72,6 +72,7 @@
     <select id="eqType">
       <option value="peaking">Peak</option><option value="lowshelf">Low shelf</option><option value="highshelf">High shelf</option>
       <option value="lowpass">Low pass</option><option value="highpass">High pass</option>
+      <option value="bandpass">Band pass</option><option value="notch">Notch</option>
     </select>
     <label>Freq <input type="number" id="eqFreq" min="20" max="20000" step="1"> Hz</label>
     <label>Gain <input type="number" id="eqGain" step="0.5"> dB</label>
@@ -337,7 +338,7 @@ function fmtHz(f) { return f >= 1000 ? +(f / 1000).toFixed(f < 10000 ? 2 : 1) + 
 const EQ_FS = 48000, EQ_L = 46, EQ_R = 592, EQ_T = 30, EQ_B = 222;
 const EQ_REGIONS = [['Sub bass', 20, 60], ['Bass', 60, 250], ['Low mids', 250, 500], ['Mid range', 500, 2000],
   ['Upper mids', 2000, 4000], ['Highs', 4000, 20000]];
-const hasGain = band => !band.type.endsWith('pass');
+const hasGain = band => !/pass|notch/.test(band.type);
 // one colour per point (by band index, so a point keeps its colour while dragged), as in GG
 const EQ_COLORS = ['#8b5cf6', '#5b6cff', '#ff4f8b', '#ff5a5a', '#ff7a59', '#ffa63d', '#c6f432', '#22d3a6', '#3ee0e0', '#38bdf8'];
 let eqCur = [];   // bands being edited
@@ -421,6 +422,8 @@ function bandDb(f, { type, freq, gain, q }) {
     peaking: [[1 + al * A, -2 * cs, 1 - al * A], [1 + al / A, -2 * cs, 1 - al / A]],
     lowpass: [[(1 - cs) / 2, 1 - cs, (1 - cs) / 2], [1 + al, -2 * cs, 1 - al]],
     highpass: [[(1 + cs) / 2, -(1 + cs), (1 + cs) / 2], [1 + al, -2 * cs, 1 - al]],
+    bandpass: [[al, 0, -al], [1 + al, -2 * cs, 1 - al]], // constant 0 dB peak gain
+    notch: [[1, -2 * cs, 1], [1 + al, -2 * cs, 1 - al]],
     lowshelf: [[A * (A + 1 - (A - 1) * cs + sA), 2 * A * (A - 1 - (A + 1) * cs), A * (A + 1 - (A - 1) * cs - sA)],
       [A + 1 + (A - 1) * cs + sA, -2 * (A - 1 + (A + 1) * cs), A + 1 + (A - 1) * cs - sA]],
     highshelf: [[A * (A + 1 + (A - 1) * cs + sA), -2 * A * (A - 1 + (A + 1) * cs), A * (A + 1 + (A - 1) * cs - sA)],
