@@ -62,6 +62,7 @@ public class Bootstrapper implements ApplicationRunner {
 				profiles.save(p);
 			}
 		}, () -> profiles.save(new EqProfile(name, bands, true))));
+		mixer.loadStreamSink(); // before the channels: their stream feeds play into it
 		// restore existing channels first; createChannel loads its own modules, so new ones must come after
 		for (var channel : channels.findAll()) {
 			mixer.applyChannel(channel);
@@ -101,6 +102,7 @@ public class Bootstrapper implements ApplicationRunner {
 			all.forEach(meters::forget); // their parec died with the old nodes
 			pw.stopAllEq();
 			pw.unloadSonarModules();
+			mixer.loadStreamSink();
 			all.forEach(mixer::applyChannel);
 			obs.reattachSonarInputs();
 			missing = false;

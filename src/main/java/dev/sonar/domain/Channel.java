@@ -38,6 +38,13 @@ public class Channel {
 
 	private boolean muted = false;
 
+	/** Streamer mode: this channel in the stream mix (output channels only), independent of volume/muted. */
+	@Column(columnDefinition = "integer default 100")
+	private int streamVolume = 100;
+
+	@Column(columnDefinition = "boolean default false")
+	private boolean streamMuted = false;
+
 	private int position = 0;
 
 	/** Before parametric bands: one gain per graphic band. Only read when eqBands is null. */
@@ -133,6 +140,22 @@ public class Channel {
 
 	public void setMuted(boolean muted) {
 		this.muted = muted;
+	}
+
+	public int getStreamVolume() {
+		return streamVolume;
+	}
+
+	public void setStreamVolume(int streamVolume) {
+		this.streamVolume = streamVolume;
+	}
+
+	public boolean isStreamMuted() {
+		return streamMuted;
+	}
+
+	public void setStreamMuted(boolean streamMuted) {
+		this.streamMuted = streamMuted;
 	}
 
 	public int getPosition() {

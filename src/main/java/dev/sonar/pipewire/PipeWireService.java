@@ -86,7 +86,7 @@ public class PipeWireService {
 
 	public long loadNullSink(String sinkName, String description) {
 		Result r = run("pactl", "load-module", "module-null-sink",
-				"sink_name=" + sinkName, "sink_properties=device.description=" + description);
+				"sink_name=" + sinkName, descriptionArg(description));
 		return parseLong(r.out());
 	}
 
@@ -96,8 +96,13 @@ public class PipeWireService {
 	 */
 	public long loadVirtualSource(String name, String description) {
 		Result r = run("pactl", "load-module", "module-null-sink", "sink_name=" + name,
-				"media.class=Audio/Source/Virtual", "channel_map=mono", "sink_properties=device.description=" + description);
+				"media.class=Audio/Source/Virtual", "channel_map=mono", descriptionArg(description));
 		return parseLong(r.out());
+	}
+
+	/** Quoted: pactl splits module args at spaces, so "Sonar Stream" became "Sonar". It has no escape for '"'. */
+	static String descriptionArg(String description) {
+		return "device.description=\"" + description.replace('"', '\'') + "\"";
 	}
 
 	/** Recording streams on source `name` (apps using the virtual mic, and our own level meter). */
@@ -152,17 +157,23 @@ public class PipeWireService {
 
 	private final Map<String, Process> eqProcesses = new ConcurrentHashMap<>();
 
+	/** Streamer mode's mix: a null-sink every output channel's stream feed plays into; OBS captures its monitor. */
+	public static final String STREAM_SINK = "sonar_stream";
+
 	/**
 	 * (Re)start the EQ for channel node `name`, routed to/from `device`.
 	 * denoise: put rnnoise in front of the EQ (mic only); skipped when the plugin isn't installed.
+	 * volume: linear gain after the EQ (null: none, the mic's volume is its source's).
+	 * stream: also feed the channel, without EQ or volume, into {@link #STREAM_SINK} at this linear gain (null: don't).
 	 */
-	public void startEq(String name, String description, String device, List<EqBand> bands, boolean mic, boolean denoise) {
+	public void startEq(String name, String description, String device, List<EqBand> bands, boolean mic, boolean denoise,
+			Double volume, Double stream) {
 		stopEq(name);
 		Path plugin = mic && denoise ? rnnoisePlugin() : null;
 		try {
 			Files.createDirectories(EQ_DIR);
 			Path conf = EQ_DIR.resolve(name + ".conf");
-			Files.writeString(conf, eqConf(name, description, device, bands, mic, plugin));
+			Files.writeString(conf, eqConf(name, description, device, bands, mic, plugin, volume, stream));
 			eqProcesses.put(name, new ProcessBuilder("pipewire", "-c", conf.toString())
 					.redirectErrorStream(true).redirectOutput(Redirect.DISCARD).start());
 		} catch (IOException e) {
@@ -204,6 +215,11 @@ public class PipeWireService {
 		run("pw-cli", "set-param", name + "_eq_in", "Props", "{ params = [" + params + " ] }");
 	}
 
+	/** Live gain change of a chain's "vol" node; node = the chain's capture node (`<sink>_eq_in`, `<sink>_stream_in`). */
+	public void setGain(String node, double gain) {
+		run("pw-cli", "set-param", node, "Props", "{ params = [ \"vol:Mult\" " + gain + " ] }");
+	}
+
 	public void stopEq(String name) {
 		Process p = eqProcesses.remove(name);
 		if (p != null) {
@@ -230,8 +246,10 @@ public class PipeWireService {
 	/**
 	 * filter-chain config: a chain of biquads, one per band (SPA-JSON).
 	 * rnnoise: the noise-suppression plugin to put in front of the biquads, or null for none.
+	 * volume, stream: see {@link #startEq}.
 	 */
-	static String eqConf(String name, String description, String device, List<EqBand> bands, boolean mic, Path rnnoise) {
+	static String eqConf(String name, String description, String device, List<EqBand> bands, boolean mic, Path rnnoise,
+			Double volume, Double stream) {
 		StringBuilder nodes = new StringBuilder();
 		StringBuilder links = new StringBuilder();
 		if (rnnoise != null) {
@@ -251,6 +269,10 @@ public class PipeWireService {
 			if (i > 0) {
 				links.append("          { output = \"b").append(i - 1).append(":Out\" input = \"b").append(i).append(":In\" }\n");
 			}
+		}
+		if (volume != null) {
+			nodes.append(gainNode(volume));
+			links.append("          { output = \"b").append(bands.size() - 1).append(":Out\" input = \"vol:In\" }\n");
 		}
 		String capture = mic
 				? "node.name = " + quote(name + "_eq_in") + " target.object = " + quote(device) + " node.passive = true"
@@ -280,9 +302,32 @@ public class PipeWireService {
 				      playback.props = { %s }
 				    }
 				  }
-				]
+				%s]
 				""".formatted(quote(description + " EQ"), nodes, links, mic ? "1" : "2", mic ? "MONO" : "FL FR",
-				capture, playback);
+				capture, playback, stream == null ? "" : streamFeed(name, description, stream));
+	}
+
+	/** The `vol` node: a linear gain, changed live by {@link #setGain}. */
+	private static String gainNode(double gain) {
+		return "          { type = builtin name = vol label = linear control = { \"Mult\" = " + gain + " } }\n";
+	}
+
+	/** Second filter-chain in a channel's EQ process: its sink's monitor (before EQ and volume) into the stream mix. */
+	private static String streamFeed(String name, String description, double gain) {
+		return """
+				  { name = libpipewire-module-filter-chain
+				    args = {
+				      node.description = %s
+				      filter.graph = { nodes = [
+				%s      ] }
+				      audio.channels = 2
+				      audio.position = [ FL FR ]
+				      capture.props = { node.name = %s target.object = %s stream.capture.sink = true node.passive = true }
+				      playback.props = { node.name = %s target.object = %s }
+				    }
+				  }
+				""".formatted(quote(description + " Stream"), gainNode(gain), quote(name + "_stream_in"), quote(name),
+				quote(name + "_stream_out"), quote(STREAM_SINK));
 	}
 
 	/** SPA-JSON string literal: names come from users and devices, so escape them. */

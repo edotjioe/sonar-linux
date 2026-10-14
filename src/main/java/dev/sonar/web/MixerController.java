@@ -65,7 +65,7 @@ public class MixerController {
 		this.bluetooth = bluetooth;
 	}
 
-	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted,
+	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted, int streamVolume, boolean streamMuted,
 			String deviceName, String deviceDescription, int position, boolean active, boolean mic, List<EqBand> eq, double[] tone,
 			boolean noiseSuppression, boolean deletable) {
 	}
@@ -94,7 +94,7 @@ public class MixerController {
 		Map<String, String> desc = Stream.concat(pw.listPhysicalSinks().stream(), pw.listPhysicalSources().stream())
 				.collect(Collectors.toMap(PhysicalSink::name, PhysicalSink::description, (a, b) -> a));
 		return mixer.listChannels().stream().map(c -> new ChannelView(
-				c.getId(), c.getName(), c.getSinkName(), c.getVolume(), c.isMuted(),
+				c.getId(), c.getName(), c.getSinkName(), c.getVolume(), c.isMuted(), c.getStreamVolume(), c.isStreamMuted(),
 				c.getDeviceName(), desc.getOrDefault(c.getDeviceName(), c.getDeviceName()),
 				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(), c.getTone(),
 				c.isNoiseSuppression(), mixer.isDeletable(c))).toList();
@@ -135,6 +135,16 @@ public class MixerController {
 	@PostMapping("/channels/{id}/mute")
 	public void mute(@PathVariable long id, @RequestBody Map<String, Boolean> body) {
 		mixer.setMute(id, required(body, "muted"));
+	}
+
+	@PostMapping("/channels/{id}/stream-volume")
+	public void streamVolume(@PathVariable long id, @RequestBody Map<String, Integer> body) {
+		mixer.setStreamVolume(id, required(body, "volume"));
+	}
+
+	@PostMapping("/channels/{id}/stream-mute")
+	public void streamMute(@PathVariable long id, @RequestBody Map<String, Boolean> body) {
+		mixer.setStreamMute(id, required(body, "muted"));
 	}
 
 	@PostMapping("/channels/{id}/device")
@@ -187,7 +197,14 @@ public class MixerController {
 	public Preferences savePreferences(@RequestBody Preferences body) {
 		body.setId(1L);
 		body.setChatMix(preferences.get().getChatMix()); // owned by /chatmix, which also applies it
+		body.setStreamerMode(preferences.get().isStreamerMode()); // owned by /streamer, likewise
 		return preferences.save(body);
+	}
+
+	/** Body: {enabled}. Restarts every output channel's EQ (a short blip). */
+	@PostMapping("/streamer")
+	public void streamer(@RequestBody Map<String, Boolean> body) {
+		mixer.setStreamerMode(required(body, "enabled"));
 	}
 
 	/** Body: {mix: -100 (all Game) .. 100 (all Chat)}. */

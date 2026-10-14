@@ -7,10 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -75,6 +77,11 @@ class MixerServiceTest {
 		return c;
 	}
 
+	/** The cubic gain the code sends for a volume %, mirroring MixerService.cube. */
+	private static double cube(int volume) {
+		return Math.pow(volume / 100.0, 3);
+	}
+
 	@Test
 	void sinkNameForNormalizes() {
 		assertEquals("sonar_voice_chat_", MixerService.sinkNameFor("Voice Chat!"));
@@ -117,7 +124,7 @@ class MixerServiceTest {
 		assertEquals("sonar_extra", c.getSinkName());
 		assertEquals(6, c.getPosition());
 		assertEquals(10L, c.getNullSinkModule());
-		verify(pw).startEq(eq("sonar_extra"), eq("Extra"), eq("out"), any(), eq(false), eq(false));
+		verify(pw).startEq(eq("sonar_extra"), eq("Extra"), eq("out"), any(), eq(false), eq(false), nullable(Double.class), nullable(Double.class));
 	}
 
 	@Test
@@ -176,11 +183,11 @@ class MixerServiceTest {
 
 		service.setVolume(1L, 150);
 		assertEquals(100, c.getVolume());
-		verify(pw).setVolume("sonar_game", 100, false);
+		verify(pw).setGain("sonar_game_eq_in", cube(100));
 
 		service.setVolume(1L, -5);
 		assertEquals(0, c.getVolume());
-		verify(pw).setVolume("sonar_game", 0, false);
+		verify(pw).setGain("sonar_game_eq_in", cube(0));
 	}
 
 	@Test
@@ -231,15 +238,15 @@ class MixerServiceTest {
 
 		service.setChatMix(50);
 
-		verify(pw).setVolume("sonar_game", 40, false);
-		verify(pw).setVolume("sonar_chat", 60, false);
+		verify(pw).setGain("sonar_game_eq_in", cube(40));
+		verify(pw).setGain("sonar_chat_eq_in", cube(60));
 	}
 
 	@Test
 	void setChatMixWithMissingChannelsDoesNothing() {
 		service.setChatMix(-20);
 
-		verify(pw, never()).setVolume(anyString(), anyInt(), anyBoolean());
+		verify(pw, never()).setGain(anyString(), anyDouble());
 	}
 
 	@Test
@@ -252,7 +259,7 @@ class MixerServiceTest {
 		service.setVolume(1L, 80);
 
 		assertEquals(80, game.getVolume());
-		verify(pw).setVolume("sonar_game", 40, false);
+		verify(pw).setGain("sonar_game_eq_in", cube(40));
 	}
 
 	@Test
@@ -321,7 +328,7 @@ class MixerServiceTest {
 		service.setEq(1L, EqBand.graphic());
 
 		verify(pw).setEqParams(eq("sonar_game"), any());
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 
 		reset(pw);
 
@@ -329,7 +336,7 @@ class MixerServiceTest {
 		changed.set(0, new EqBand("lowshelf", 31, 0, 1.41));
 		service.setEq(1L, changed);
 
-		verify(pw).startEq(eq("sonar_game"), eq("Game"), any(), any(), eq(false), eq(false));
+		verify(pw).startEq(eq("sonar_game"), eq("Game"), any(), any(), eq(false), eq(false), nullable(Double.class), nullable(Double.class));
 		verify(pw, never()).setEqParams(anyString(), any());
 	}
 
@@ -446,8 +453,8 @@ class MixerServiceTest {
 
 		service.setDevice(1L, "hdmi");
 
-		verify(pw).startEq(eq("sonar_game"), eq("Game"), eq("hdmi"), any(), eq(false), eq(false));
-		verify(pw, never()).setVolume(anyString(), anyInt(), anyBoolean());
+		verify(pw).startEq(eq("sonar_game"), eq("Game"), eq("hdmi"), any(), eq(false), eq(false), nullable(Double.class), nullable(Double.class));
+		verify(pw, never()).setGain(anyString(), anyDouble());
 	}
 
 	@Test
@@ -461,7 +468,7 @@ class MixerServiceTest {
 
 		service.setDevice(1L, "alsa_in");
 
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 	}
 
 	@Test
@@ -475,7 +482,7 @@ class MixerServiceTest {
 
 		service.setDevice(1L, "alsa_in");
 
-		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true), eq(false));
+		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true), eq(false), nullable(Double.class), nullable(Double.class));
 	}
 
 	@Test
@@ -500,7 +507,7 @@ class MixerServiceTest {
 		when(channels.findById(1L)).thenReturn(Optional.of(c));
 
 		assertThrows(IllegalArgumentException.class, () -> service.setNoiseSuppression(1L, true));
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 	}
 
 	@Test
@@ -512,7 +519,7 @@ class MixerServiceTest {
 		when(pw.rnnoisePlugin()).thenReturn(null);
 
 		assertThrows(IllegalStateException.class, () -> service.setNoiseSuppression(1L, true));
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 	}
 
 	@Test
@@ -527,7 +534,7 @@ class MixerServiceTest {
 		service.setNoiseSuppression(1L, true);
 
 		assertTrue(c.isNoiseSuppression());
-		verify(pw).startEq(eq("sonar_mic"), any(), any(), any(), eq(true), eq(true));
+		verify(pw).startEq(eq("sonar_mic"), any(), any(), any(), eq(true), eq(true), nullable(Double.class), nullable(Double.class));
 		verify(channels).save(c);
 	}
 
@@ -543,7 +550,7 @@ class MixerServiceTest {
 		service.setNoiseSuppression(1L, false);
 
 		assertFalse(c.isNoiseSuppression());
-		verify(pw).startEq(eq("sonar_mic"), any(), any(), any(), eq(true), eq(false));
+		verify(pw).startEq(eq("sonar_mic"), any(), any(), any(), eq(true), eq(false), nullable(Double.class), nullable(Double.class));
 		verify(channels).save(c);
 	}
 
@@ -562,7 +569,7 @@ class MixerServiceTest {
 
 		assertEquals(42L, c.getNullSinkModule());
 		verify(pw).loadVirtualSource("sonar_mic", "Mic");
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 		verify(pw).setVolume("sonar_mic", 70, true);
 		verify(pw).setMute("sonar_mic", true, true);
 	}
@@ -580,7 +587,7 @@ class MixerServiceTest {
 
 		service.syncMic();
 
-		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true), eq(false));
+		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true), eq(false), nullable(Double.class), nullable(Double.class));
 		verify(pw, never()).stopEq("sonar_mic");
 	}
 
@@ -595,7 +602,7 @@ class MixerServiceTest {
 
 		service.syncMic();
 
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 		verify(pw, never()).stopEq("sonar_mic");
 	}
 
@@ -611,7 +618,7 @@ class MixerServiceTest {
 		service.syncMic();
 
 		verify(pw).stopEq("sonar_mic");
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 	}
 
 	@Test
@@ -627,7 +634,7 @@ class MixerServiceTest {
 		service.syncMic();
 
 		verify(pw, never()).stopEq("sonar_mic");
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 	}
 
 	@Test
@@ -639,7 +646,7 @@ class MixerServiceTest {
 		service.syncMic();
 
 		verify(pw, never()).sourceConsumers(anyString());
-		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class));
 		verify(pw, never()).stopEq(anyString());
 	}
 
@@ -783,5 +790,98 @@ class MixerServiceTest {
 		service.applyChannel(c);
 
 		assertEquals("alsa_output.speakers", c.getDeviceName());
+	}
+
+	@Test
+	void setStreamVolumeClampsAndSetsGain() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		service.setStreamVolume(1L, 150);
+
+		assertEquals(100, c.getStreamVolume());
+		verify(pw).setGain("sonar_game_stream_in", 1.0);
+	}
+
+	@Test
+	void setStreamVolumeOnMicThrows() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		when(channels.findById(1L)).thenReturn(Optional.of(mic));
+
+		assertThrows(IllegalArgumentException.class, () -> service.setStreamVolume(1L, 50));
+	}
+
+	@Test
+	void setStreamMuteSetsGainZero() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		service.setStreamMute(1L, true);
+
+		verify(pw).setGain("sonar_game_stream_in", 0.0);
+	}
+
+	@Test
+	void setStreamMuteOnMicThrows() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		when(channels.findById(1L)).thenReturn(Optional.of(mic));
+
+		assertThrows(IllegalArgumentException.class, () -> service.setStreamMute(1L, true));
+	}
+
+	@Test
+	void setMuteOnOutputSetsGainZero() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		service.setMute(1L, true);
+
+		verify(pw).setGain("sonar_game_eq_in", 0.0);
+	}
+
+	@Test
+	void setStreamerModeOnLoadsSinkAndRestartsOutputChannels() {
+		Channel game = channel(1L);
+		game.setSinkName("sonar_game");
+		game.setName("Game");
+		game.setDeviceName("out");
+		Channel mic = channel(2L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(game, mic));
+		when(pw.loadNullSink("sonar_stream", "Sonar Stream")).thenReturn(7L);
+
+		service.setStreamerMode(true);
+
+		assertTrue(prefs.isStreamerMode());
+		verify(pw).loadNullSink("sonar_stream", "Sonar Stream");
+		verify(pw).startEq(eq("sonar_game"), eq("Game"), eq("out"), any(), eq(false), eq(false), anyDouble(), eq(1.0));
+		verify(pw, never()).startEq(eq("sonar_mic"), any(), any(), any(), anyBoolean(), anyBoolean(),
+				nullable(Double.class), nullable(Double.class));
+	}
+
+	@Test
+	void setStreamerModeOffUnloadsSink() {
+		Channel game = channel(1L);
+		game.setSinkName("sonar_game");
+		game.setName("Game");
+		game.setDeviceName("out");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(game));
+		when(pw.loadNullSink("sonar_stream", "Sonar Stream")).thenReturn(7L);
+
+		service.setStreamerMode(true);
+		service.setStreamerMode(false);
+
+		verify(pw).unloadModule(7L);
+	}
+
+	@Test
+	void createChannelRejectsStreamSinkName() {
+		assertThrows(IllegalArgumentException.class, () -> service.createChannel("Stream", false));
 	}
 }

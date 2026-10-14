@@ -49,6 +49,12 @@
     <div class="hint">Off: unassigned apps stay on the default output.</div>
   </fieldset>
   <fieldset>
+    <legend>Streaming</legend>
+    <label><input type="checkbox" name="streamerMode" /> Streamer mode</label>
+    <div class="hint">Adds a "Sonar Stream" output with its own volume per channel (📡), without EQ, ChatMix or your mutes.
+      In OBS, capture it with an Audio Output Capture. Switching restarts the channels' audio for a moment.</div>
+  </fieldset>
+  <fieldset>
     <legend>Display</legend>
     <label><input type="checkbox" name="meters" /> Level meters</label>
     <div class="hint">Meters keep the mic in use while Sonar is open.</div>
@@ -217,9 +223,16 @@ function renderChannels() {
         </div>
       </header>
       <div class="row">
+        ${streaming(c) ? '<span class="mix" title="What you hear">🎧</span>' : ''}
         <input type="range" min="0" max="${c.mic ? 200 : 100}" value="${c.volume}" oninput="this.nextElementSibling.textContent=this.value" onchange="setVolume(${c.id}, this.value)" />
         <span class="val">${c.volume}</span>
       </div>
+      ${streaming(c) ? `<div class="row">
+        <span class="mix" title="Stream mix (Sonar Stream, for OBS)">📡</span>
+        <input type="range" min="0" max="100" value="${c.streamVolume}" oninput="this.nextElementSibling.textContent=this.value" onchange="setStreamVolume(${c.id}, this.value)" />
+        <span class="val">${c.streamVolume}</span>
+        <button class="mute" title="Mute on stream" onclick="setStreamMute(${c.id}, ${!c.streamMuted})">${c.streamMuted ? '🔇' : '🔊'}</button>
+      </div>` : ''}
       <div class="meter"><div id="lvl-${c.id}"></div></div>
       <div class="devlabel">${c.mic ? 'Input' : 'Output'}</div>
       <select onchange="setDevice(${c.id}, this.value)">
@@ -237,6 +250,7 @@ async function loadPrefs() {
   d.querySelector(`[name=hotkeyOpens][value=${prefs.hotkeyOpens}]`).checked = true;
   d.querySelector('[name=autoRoute]').checked = prefs.autoRoute;
   d.querySelector('[name=meters]').checked = prefs.meters;
+  d.querySelector('[name=streamerMode]').checked = prefs.streamerMode;
   document.documentElement.classList.toggle('no-meters', !prefs.meters);
   $('cmSlider').value = prefs.chatMix;
   renderChatMix();
@@ -290,6 +304,15 @@ function route(app, channelId) {
   api('/api/route', 'POST', { binary: app.binary, displayName: app.appName, channelId }).then(loadApps).catch(alert);
 }
 function setVolume(id, v) { api(`/api/channels/${id}/volume`, 'POST', { volume: +v }).catch(alert); }
+// Streamer mode: output channels get a second slider, their volume in the Sonar Stream mix
+const streaming = c => prefs.streamerMode && !c.mic;
+function setStreamVolume(id, v) { api(`/api/channels/${id}/stream-volume`, 'POST', { volume: +v }).catch(alert); }
+function setStreamMute(id, muted) { api(`/api/channels/${id}/stream-mute`, 'POST', { muted }).then(loadChannels).catch(alert); }
+async function setStreamer(enabled) {
+  await api('/api/streamer', 'POST', { enabled });
+  await loadPrefs();
+  loadChannels();
+}
 // Headset batteries: the Arctis (from its base station) and Bluetooth headphones (via UPower);
 // hidden when there are none
 async function loadHeadset() {
@@ -631,7 +654,7 @@ async function deleteProfile() {
   } catch (e) { alert(e.message); }
 }
 
-$('prefs').addEventListener('change', () => savePrefs().catch(alert));
+$('prefs').addEventListener('change', e => (e.target.name === 'streamerMode' ? setStreamer(e.target.checked) : savePrefs()).catch(alert));
 if (document.documentElement.classList.contains('overlay')) {
   try { if (localStorage.getItem('obsSide')) showObsSide(true); } catch (e) {}
 }

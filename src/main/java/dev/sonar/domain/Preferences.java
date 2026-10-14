@@ -24,6 +24,10 @@ public class Preferences {
 	/** Show level meters (they record every channel, mic included, while the UI is open). */
 	private boolean meters = true;
 
+	/** A second mix (Sonar Stream) for OBS, with its own volume per channel. */
+	@Column(columnDefinition = "boolean default false")
+	private boolean streamerMode = false;
+
 	public Long getId() {
 		return id;
 	}
@@ -62,5 +66,13 @@ public class Preferences {
 
 	public void setMeters(boolean meters) {
 		this.meters = meters;
+	}
+
+	public boolean isStreamerMode() {
+		return streamerMode;
+	}
+
+	public void setStreamerMode(boolean streamerMode) {
+		this.streamerMode = streamerMode;
 	}
 }

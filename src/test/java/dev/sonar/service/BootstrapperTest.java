@@ -83,6 +83,7 @@ class BootstrapperTest {
 		bootstrapper.recoverAfterPipeWireRestart();
 		verify(pw).stopAllEq();
 		verify(pw).unloadSonarModules();
+		verify(mixer).loadStreamSink();
 		verify(mixer).applyChannel(game);
 		verify(obs).reattachSonarInputs();
 	}

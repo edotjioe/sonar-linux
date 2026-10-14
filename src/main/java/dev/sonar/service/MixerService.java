@@ -64,7 +64,8 @@ public class MixerService {
 	public Channel createChannel(String name, boolean mic) {
 		name = checkName(name);
 		String sinkName = sinkNameFor(name);
-		if (channels.findBySinkName(sinkName).isPresent() || channels.findByName(name).isPresent()) {
+		if (channels.findBySinkName(sinkName).isPresent() || channels.findByName(name).isPresent()
+				|| sinkName.equals(PipeWireService.STREAM_SINK)) {
 			throw new IllegalArgumentException("A channel with that name already exists: " + name);
 		}
 		Channel c = new Channel();
@@ -164,15 +165,69 @@ public class MixerService {
 	public Channel setVolume(long id, int volume) {
 		Channel c = require(id);
 		c.setVolume(Math.max(0, Math.min(c.isMic() ? MIC_MAX_VOLUME : 100, volume)));
-		pw.setVolume(c.getSinkName(), effectiveVolume(c), c.isMic());
+		if (c.isMic()) {
+			pw.setVolume(c.getSinkName(), c.getVolume(), true);
+		} else {
+			pw.setGain(c.getSinkName() + "_eq_in", gain(c));
+		}
 		return channels.save(c);
 	}
 
 	public Channel setMute(long id, boolean muted) {
 		Channel c = require(id);
 		c.setMuted(muted);
-		pw.setMute(c.getSinkName(), muted, c.isMic());
+		if (c.isMic()) {
+			pw.setMute(c.getSinkName(), muted, true);
+		} else {
+			pw.setGain(c.getSinkName() + "_eq_in", gain(c));
+		}
 		return channels.save(c);
+	}
+
+	/** Streamer mode: the channel's volume in the stream mix. Applied live, and kept while streamer mode is off. */
+	public Channel setStreamVolume(long id, int volume) {
+		Channel c = requireOutput(id);
+		c.setStreamVolume(Math.max(0, Math.min(100, volume)));
+		pw.setGain(c.getSinkName() + "_stream_in", streamGain(c));
+		return channels.save(c);
+	}
+
+	public Channel setStreamMute(long id, boolean muted) {
+		Channel c = requireOutput(id);
+		c.setStreamMuted(muted);
+		pw.setGain(c.getSinkName() + "_stream_in", streamGain(c));
+		return channels.save(c);
+	}
+
+	/** In-memory only: PipeWire reuses module ids, and Bootstrapper unloads every sonar module on start anyway. */
+	private long streamModule = -1;
+
+	/**
+	 * Streamer mode on: the Sonar Stream sink, plus a feed into it from every output channel's EQ process.
+	 * Restarts those processes, so every channel blips once.
+	 */
+	public void setStreamerMode(boolean on) {
+		Preferences p = preferences.get();
+		p.setStreamerMode(on);
+		preferences.save(p);
+		if (on && streamModule < 0) {
+			loadStreamSink();
+		}
+		listChannels().stream().filter(c -> !c.isMic()).forEach(this::startEq);
+		if (!on && streamModule >= 0) {
+			pw.unloadModule(streamModule); // after the restarts: no feed plays into it any more
+			streamModule = -1;
+		}
+	}
+
+	/** Bootstrapper, after unloading every sonar module and before the channels: the stream sink, if streamer mode is on. */
+	public void loadStreamSink() {
+		streamModule = -1;
+		if (preferences.get().isStreamerMode()) {
+			streamModule = pw.loadNullSink(PipeWireService.STREAM_SINK, "Sonar Stream");
+			pw.setVolume(PipeWireService.STREAM_SINK, 100, false); // WirePlumber may restore an old volume
+			pw.setMute(PipeWireService.STREAM_SINK, false, false);
+		}
 	}
 
 	public Channel setDevice(long id, String deviceName) {
@@ -208,13 +263,25 @@ public class MixerService {
 		p.setChatMix(Math.max(-100, Math.min(100, mix)));
 		preferences.save(p);
 		for (String sink : List.of(GAME_SINK, CHAT_SINK)) {
-			channels.findBySinkName(sink).ifPresent(c -> pw.setVolume(sink, mixed(c.getVolume(), sink, p.getChatMix()), false));
+			channels.findBySinkName(sink).ifPresent(c -> pw.setGain(sink + "_eq_in", gain(c)));
 		}
 	}
 
-	/** Volume actually sent to PipeWire: the channel's own volume, scaled down by ChatMix for Game/Chat. */
-	private int effectiveVolume(Channel c) {
-		return c.isMic() ? c.getVolume() : mixed(c.getVolume(), c.getSinkName(), preferences.get().getChatMix());
+	/**
+	 * An output channel's gain after its EQ: its volume, scaled down by ChatMix for Game/Chat, 0 when muted. Cubed
+	 * like pactl's volume %, so the slider feels the same. The sink itself stays at 100%: its monitor feeds the stream mix.
+	 */
+	private double gain(Channel c) {
+		return c.isMuted() ? 0 : cube(mixed(c.getVolume(), c.getSinkName(), preferences.get().getChatMix()));
+	}
+
+	/** The channel's gain into the stream mix (ChatMix only affects what you hear). */
+	private static double streamGain(Channel c) {
+		return c.isStreamMuted() ? 0 : cube(c.getStreamVolume());
+	}
+
+	private static double cube(int volume) {
+		return Math.pow(volume / 100.0, 3);
 	}
 
 	/** Towards Chat (mix > 0) fades Game; towards Game (mix < 0) fades Chat; the centre leaves both alone. */
@@ -299,11 +366,14 @@ public class MixerService {
 		c.setNullSinkModule(c.isMic()
 				? pw.loadVirtualSource(c.getSinkName(), c.getName())
 				: pw.loadNullSink(c.getSinkName(), c.getName()));
-		if (!c.isMic()) {
-			startEq(c); // the mic's runs on demand: see syncMic
+		if (c.isMic()) {
+			pw.setVolume(c.getSinkName(), c.getVolume(), true); // the mic's EQ runs on demand: see syncMic
+			pw.setMute(c.getSinkName(), c.isMuted(), true);
+		} else {
+			startEq(c); // volume and mute are its gain
+			pw.setVolume(c.getSinkName(), 100, false); // WirePlumber may restore an old volume
+			pw.setMute(c.getSinkName(), false, false);
 		}
-		pw.setVolume(c.getSinkName(), effectiveVolume(c), c.isMic());
-		pw.setMute(c.getSinkName(), c.isMuted(), c.isMic());
 		return channels.save(c);
 	}
 
@@ -322,7 +392,8 @@ public class MixerService {
 	}
 
 	private void startEq(Channel c) {
-		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), chain(c), c.isMic(), c.isNoiseSuppression());
+		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), chain(c), c.isMic(), c.isNoiseSuppression(),
+				c.isMic() ? null : gain(c), !c.isMic() && preferences.get().isStreamerMode() ? streamGain(c) : null);
 	}
 
 	/** After a setting the EQ process is built from changed: restart it, unless it's the mic's and that's off. */
@@ -366,6 +437,14 @@ public class MixerService {
 
 	private Channel require(long id) {
 		return channels.findById(id).orElseThrow(() -> new IllegalArgumentException("Unknown channel: " + id));
+	}
+
+	private Channel requireOutput(long id) {
+		Channel c = require(id);
+		if (c.isMic()) {
+			throw new IllegalArgumentException("The mic isn't in the stream mix: " + c.getName());
+		}
+		return c;
 	}
 
 	@PreDestroy
