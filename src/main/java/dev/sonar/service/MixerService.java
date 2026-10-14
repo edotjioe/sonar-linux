@@ -224,7 +224,7 @@ public class MixerService {
 	public void loadStreamSink() {
 		streamModule = -1;
 		if (preferences.get().isStreamerMode()) {
-			streamModule = pw.loadNullSink(PipeWireService.STREAM_SINK, "Sonar Stream");
+			streamModule = pw.loadNullSink(PipeWireService.STREAM_SINK, "Sonar Stream", false);
 			pw.setVolume(PipeWireService.STREAM_SINK, 100, false); // WirePlumber may restore an old volume
 			pw.setMute(PipeWireService.STREAM_SINK, false, false);
 		}
@@ -250,6 +250,25 @@ public class MixerService {
 		c.setNoiseSuppression(enabled);
 		restartEq(c);
 		return channels.save(c);
+	}
+
+	/**
+	 * Output only: virtual 7.1 surround. Reloads the channel's sink (as 7.1, or back to stereo), so its apps drop to
+	 * the default output until StreamWatcher moves them back (~1 s). Games pick their channel count when they start.
+	 */
+	public Channel setSpatial(long id, boolean enabled) {
+		Channel c = requireOutput(id);
+		if (enabled && pw.spatialHrtf() == null) {
+			throw new IllegalStateException("Spatial audio needs PipeWire's SOFA plugin and an HRTF: install libmysofa"
+					+ " (or put a .sofa file at ~/.local/share/sonar/hrtf.sofa)");
+		}
+		c.setSpatial(enabled);
+		meters.forget(c); // its parec dies with the old sink
+		pw.stopEq(c.getSinkName());
+		if (c.getNullSinkModule() >= 0) {
+			pw.unloadModule(c.getNullSinkModule());
+		}
+		return applyChannel(c);
 	}
 
 	/** The headset's own mute button (via the base station): mirror it onto the mic channel. */
@@ -365,7 +384,7 @@ public class MixerService {
 		c.setDeviceName(device);
 		c.setNullSinkModule(c.isMic()
 				? pw.loadVirtualSource(c.getSinkName(), c.getName())
-				: pw.loadNullSink(c.getSinkName(), c.getName()));
+				: pw.loadNullSink(c.getSinkName(), c.getName(), c.isSpatial()));
 		if (c.isMic()) {
 			pw.setVolume(c.getSinkName(), c.getVolume(), true); // the mic's EQ runs on demand: see syncMic
 			pw.setMute(c.getSinkName(), c.isMuted(), true);
@@ -393,7 +412,8 @@ public class MixerService {
 
 	private void startEq(Channel c) {
 		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), chain(c), c.isMic(), c.isNoiseSuppression(),
-				c.isMic() ? null : gain(c), !c.isMic() && preferences.get().isStreamerMode() ? streamGain(c) : null);
+				c.isMic() ? null : gain(c), !c.isMic() && preferences.get().isStreamerMode() ? streamGain(c) : null,
+				c.isSpatial());
 	}
 
 	/** After a setting the EQ process is built from changed: restart it, unless it's the mic's and that's off. */

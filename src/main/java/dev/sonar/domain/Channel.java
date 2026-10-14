@@ -66,6 +66,18 @@ public class Channel {
 	@Column(columnDefinition = "boolean default false")
 	private boolean noiseSuppression = false;
 
+	/** Output only: virtual 7.1 surround for headphones (the sink becomes 7.1, the EQ process adds an HRTF stage). */
+	@Column(columnDefinition = "boolean default false")
+	private boolean spatial = false;
+
+	public boolean isSpatial() {
+		return spatial;
+	}
+
+	public void setSpatial(boolean spatial) {
+		this.spatial = spatial;
+	}
+
 	public boolean isNoiseSuppression() {
 		return noiseSuppression;
 	}

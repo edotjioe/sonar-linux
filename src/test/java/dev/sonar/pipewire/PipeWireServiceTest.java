@@ -27,7 +27,7 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfOutputChannel() {
-		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(3.5), false, null, null, null);
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(3.5), false, null, null, null, null);
 
 		assertTrue(conf.contains("target.object = \"sonar_game\" stream.capture.sink = true"));
 		assertTrue(conf.contains("node.name = \"sonar_game_eq_out\" target.object = \"alsa_out\""));
@@ -39,7 +39,7 @@ class PipeWireServiceTest {
 
 		List<EqBand> bands = new ArrayList<>(EqBand.graphic(3.5));
 		bands.set(0, new EqBand("lowshelf", 31, 3.5, 1.41));
-		String lowshelfConf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", bands, false, null, null, null);
+		String lowshelfConf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", bands, false, null, null, null, null);
 		assertTrue(lowshelfConf.contains("label = bq_lowshelf"));
 	}
 
@@ -48,7 +48,7 @@ class PipeWireServiceTest {
 		List<EqBand> bands = new ArrayList<>(EqBand.graphic(3.5));
 		bands.set(0, new EqBand("notch", 1000, 0, 5));
 		bands.set(1, new EqBand("bandpass", 2000, 0, 2));
-		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", bands, false, null, null, null);
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", bands, false, null, null, null, null);
 
 		assertTrue(conf.contains("label = bq_notch"));
 		assertTrue(conf.contains("label = bq_bandpass"));
@@ -56,7 +56,7 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfMic() {
-		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", EqBand.graphic(), true, null, null, null);
+		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", EqBand.graphic(), true, null, null, null, null);
 
 		assertTrue(conf.contains("node.name = \"sonar_mic_eq_in\" target.object = \"alsa_in\" node.passive = true"));
 		// linked into the virtual mic by startEq: WirePlumber would send it to the default output instead
@@ -69,7 +69,7 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfEmptyBandsAddsNeutralPeakingNode() {
-		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", List.of(), false, null, null, null);
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", List.of(), false, null, null, null, null);
 		assertTrue(conf.contains("name = b0 label = bq_peaking"));
 	}
 
@@ -87,7 +87,7 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfEscapesDescription() {
-		String conf = PipeWireService.eqConf("sonar_game", "x\" } evil = { ", "alsa_out", EqBand.graphic(), false, null, null, null);
+		String conf = PipeWireService.eqConf("sonar_game", "x\" } evil = { ", "alsa_out", EqBand.graphic(), false, null, null, null, null);
 
 		assertTrue(conf.contains("x\\\" } evil"));
 		assertFalse(conf.contains("x\" } evil"));
@@ -96,7 +96,7 @@ class PipeWireServiceTest {
 	@Test
 	void eqConfMicWithRnnoiseAddsNoiseSuppressor() {
 		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", EqBand.graphic(), true,
-				Path.of("/usr/lib/ladspa/librnnoise_ladspa.so"), null, null);
+				Path.of("/usr/lib/ladspa/librnnoise_ladspa.so"), null, null, null);
 
 		assertTrue(conf.contains("ladspa"));
 		assertTrue(conf.contains("ns:Output"));
@@ -107,7 +107,7 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfMicWithoutRnnoiseHasNoSuppressor() {
-		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", EqBand.graphic(), true, null, null, null);
+		String conf = PipeWireService.eqConf("sonar_mic", "Mic", "alsa_in", EqBand.graphic(), true, null, null, null, null);
 
 		assertFalse(conf.contains("ladspa"));
 		assertFalse(conf.contains("ns:Output"));
@@ -193,7 +193,7 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfVolumeAddsLinearGainNode() {
-		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, 0.5, null);
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, 0.5, null, null);
 
 		assertTrue(conf.contains("label = linear"));
 		assertTrue(conf.contains("\"vol:In\""));
@@ -201,7 +201,7 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfStreamAddsStreamFeed() {
-		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, null, 0.25);
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, null, 0.25, null);
 
 		assertTrue(conf.contains("_stream_in"));
 		assertTrue(conf.contains("_stream_out"));
@@ -210,8 +210,29 @@ class PipeWireServiceTest {
 
 	@Test
 	void eqConfWithoutStreamHasNoStreamFeed() {
-		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, null, null);
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, null, null, null);
 
 		assertFalse(conf.contains("_stream_in"));
+	}
+
+	@Test
+	void eqConfSpatialAddsSofaChain() {
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, null, null,
+				Path.of("/x/h.sofa"));
+
+		assertTrue(conf.contains("label = spatializer"));
+		assertTrue(conf.contains("\"/x/h.sofa\""));
+		assertTrue(conf.contains("sonar_game_spatial_in"));
+		assertTrue(conf.contains("sonar_game_spatial_out"));
+		assertTrue(conf.contains("audio.channels = 8"));
+		assertTrue(conf.contains("target.object = \"sonar_game_spatial_in\""));
+	}
+
+	@Test
+	void eqConfWithoutHrtfHasNoSpatializer() {
+		String conf = PipeWireService.eqConf("sonar_game", "Game", "alsa_out", EqBand.graphic(), false, null, null, null,
+				null);
+
+		assertFalse(conf.contains("spatializer"));
 	}
 }

@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.slf4j.Logger;
@@ -84,9 +85,12 @@ public class PipeWireService {
 
 	// --- modules (output channels are null-sinks) ---
 
-	public long loadNullSink(String sinkName, String description) {
-		Result r = run("pactl", "load-module", "module-null-sink",
-				"sink_name=" + sinkName, descriptionArg(description));
+	/** surround: 7.1, so games output surround for the spatial audio chain (see {@link #spatialHrtf}). */
+	public long loadNullSink(String sinkName, String description, boolean surround) {
+		Result r = surround
+				? run("pactl", "load-module", "module-null-sink", "sink_name=" + sinkName, descriptionArg(description),
+						"channels=8", "channel_map=front-left,front-right,front-center,lfe,rear-left,rear-right,side-left,side-right")
+				: run("pactl", "load-module", "module-null-sink", "sink_name=" + sinkName, descriptionArg(description));
 		return parseLong(r.out());
 	}
 
@@ -165,15 +169,17 @@ public class PipeWireService {
 	 * denoise: put rnnoise in front of the EQ (mic only); skipped when the plugin isn't installed.
 	 * volume: linear gain after the EQ (null: none, the mic's volume is its source's).
 	 * stream: also feed the channel, without EQ or volume, into {@link #STREAM_SINK} at this linear gain (null: don't).
+	 * spatial: virtual 7.1 surround after the EQ (the channel's sink must be 7.1); skipped when unavailable.
 	 */
 	public void startEq(String name, String description, String device, List<EqBand> bands, boolean mic, boolean denoise,
-			Double volume, Double stream) {
+			Double volume, Double stream, boolean spatial) {
 		stopEq(name);
 		Path plugin = mic && denoise ? rnnoisePlugin() : null;
+		Path hrtf = spatial && !mic ? spatialHrtf() : null;
 		try {
 			Files.createDirectories(EQ_DIR);
 			Path conf = EQ_DIR.resolve(name + ".conf");
-			Files.writeString(conf, eqConf(name, description, device, bands, mic, plugin, volume, stream));
+			Files.writeString(conf, eqConf(name, description, device, bands, mic, plugin, volume, stream, hrtf));
 			eqProcesses.put(name, new ProcessBuilder("pipewire", "-c", conf.toString())
 					.redirectErrorStream(true).redirectOutput(Redirect.DISCARD).start());
 		} catch (IOException e) {
@@ -236,6 +242,18 @@ public class PipeWireService {
 				.forEach(PipeWireService::awaitExit);
 	}
 
+	/**
+	 * The HRTF for spatial audio (a SOFA file, from libmysofa), or null when it or PipeWire's SOFA plugin is missing.
+	 * ~/.local/share/sonar/hrtf.sofa overrides it, e.g. with a measured or better-matching head.
+	 */
+	public Path spatialHrtf() {
+		boolean plugin = Stream.of("/usr/lib/spa-0.2", "/usr/lib64/spa-0.2", "/usr/lib/x86_64-linux-gnu/spa-0.2")
+				.anyMatch(dir -> Files.isReadable(Path.of(dir, "filter-graph", "libspa-filter-graph-plugin-sofa.so")));
+		return !plugin ? null : Stream.of(System.getProperty("user.home") + "/.local/share/sonar/hrtf.sofa",
+				"/usr/share/libmysofa/MIT_KEMAR_normal_pinna.sofa", "/usr/share/libmysofa/default.sofa")
+				.map(Path::of).filter(Files::isReadable).findFirst().orElse(null);
+	}
+
 	/** rnnoise's LADSPA plugin (package noise-suppression-for-voice), or null when it isn't installed. */
 	public Path rnnoisePlugin() {
 		return Stream.of("/usr/lib/ladspa", "/usr/lib64/ladspa", "/usr/local/lib/ladspa",
@@ -246,10 +264,10 @@ public class PipeWireService {
 	/**
 	 * filter-chain config: a chain of biquads, one per band (SPA-JSON).
 	 * rnnoise: the noise-suppression plugin to put in front of the biquads, or null for none.
-	 * volume, stream: see {@link #startEq}.
+	 * volume, stream: see {@link #startEq}. hrtf: SOFA file for spatial audio, or null for none.
 	 */
 	static String eqConf(String name, String description, String device, List<EqBand> bands, boolean mic, Path rnnoise,
-			Double volume, Double stream) {
+			Double volume, Double stream, Path hrtf) {
 		StringBuilder nodes = new StringBuilder();
 		StringBuilder links = new StringBuilder();
 		if (rnnoise != null) {
@@ -279,7 +297,8 @@ public class PipeWireService {
 				: "node.name = " + quote(name + "_eq_in") + " target.object = " + quote(name)
 						+ " stream.capture.sink = true node.passive = true";
 		String playback = "node.name = " + quote(name + "_eq_out")
-				+ (mic ? " node.autoconnect = false" : " target.object = " + quote(device)); // mic: linked by startEq
+				+ (mic ? " node.autoconnect = false" // mic: linked by startEq
+						: " target.object = " + quote(hrtf == null ? device : name + "_spatial_in"));
 		return """
 				context.spa-libs = { audio.convert.* = audioconvert/libspa-audioconvert support.* = support/libspa-support }
 				context.modules = [
@@ -303,8 +322,59 @@ public class PipeWireService {
 				    }
 				  }
 				%s]
-				""".formatted(quote(description + " EQ"), nodes, links, mic ? "1" : "2", mic ? "MONO" : "FL FR",
-				capture, playback, stream == null ? "" : streamFeed(name, description, stream));
+				""".formatted(quote(description + " EQ"), nodes, links, mic ? "1" : hrtf != null ? "8" : "2",
+				mic ? "MONO" : hrtf != null ? SURROUND : "FL FR",
+				capture, playback, (hrtf == null ? "" : spatial(name, description, device, hrtf))
+						+ (stream == null ? "" : streamFeed(name, description, stream)));
+	}
+
+	private static final String SURROUND = "FL FR FC LFE RL RR SL SR";
+
+	/** Where each 7.1 speaker sits, degrees counter-clockwise from the front (the SOFA convention); LFE as centre. */
+	private static final int[] SURROUND_AZIMUTH = { 30, 330, 0, 0, 150, 210, 90, 270 };
+
+	/**
+	 * Spatial audio, a second filter-chain after the EQ: each 7.1 speaker through the HRTF from its direction, mixed
+	 * down to stereo for headphones. The EQ chain plays into it (its capture is a sink) instead of into the device.
+	 * The mix is halved: eight HRTF'd speakers clip loud stereo otherwise.
+	 */
+	private static String spatial(String name, String description, String device, Path hrtf) {
+		String[] speakers = SURROUND.split(" ");
+		StringBuilder nodes = new StringBuilder();
+		StringBuilder links = new StringBuilder();
+		StringBuilder gains = new StringBuilder();
+		for (int i = 0; i < speakers.length; i++) {
+			nodes.append("          { type = sofa label = spatializer name = sp").append(speakers[i])
+					.append(" config = { filename = ").append(quote(hrtf.toString())).append(" } control = { \"Azimuth\" = ")
+					.append(SURROUND_AZIMUTH[i]).append(".0 \"Elevation\" = 0.0 \"Radius\" = 1.0 } }\n");
+			links.append("          { output = \"sp").append(speakers[i]).append(":Out L\" input = \"mixL:In ").append(i + 1)
+					.append("\" }\n          { output = \"sp").append(speakers[i]).append(":Out R\" input = \"mixR:In ")
+					.append(i + 1).append("\" }\n");
+			gains.append(" \"Gain ").append(i + 1).append("\" = 0.5");
+		}
+		for (String side : List.of("L", "R")) {
+			nodes.append("          { type = builtin label = mixer name = mix").append(side).append(" control = {")
+					.append(gains).append(" } }\n");
+		}
+		return """
+				  { name = libpipewire-module-filter-chain
+				    args = {
+				      node.description = %s
+				      filter.graph = {
+				        nodes = [
+				%s        ]
+				        links = [
+				%s        ]
+				        inputs = [ %s ]
+				        outputs = [ "mixL:Out" "mixR:Out" ]
+				      }
+				      capture.props = { node.name = %s media.class = Audio/Sink audio.channels = 8 audio.position = [ %s ] }
+				      playback.props = { node.name = %s target.object = %s audio.channels = 2 audio.position = [ FL FR ] }
+				    }
+				  }
+				""".formatted(quote(description + " Spatial"), nodes, links,
+				Stream.of(speakers).map(sp -> quote("sp" + sp + ":In")).collect(Collectors.joining(" ")),
+				quote(name + "_spatial_in"), SURROUND, quote(name + "_spatial_out"), quote(device));
 	}
 
 	/** The `vol` node: a linear gain, changed live by {@link #setGain}. */

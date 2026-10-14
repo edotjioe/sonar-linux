@@ -67,7 +67,7 @@ public class MixerController {
 
 	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted, int streamVolume, boolean streamMuted,
 			String deviceName, String deviceDescription, int position, boolean active, boolean mic, List<EqBand> eq, double[] tone,
-			boolean noiseSuppression, boolean deletable) {
+			boolean noiseSuppression, boolean spatial, boolean deletable) {
 	}
 
 	public record EqView(double maxGain, List<EqProfile> profiles) {
@@ -97,7 +97,7 @@ public class MixerController {
 				c.getId(), c.getName(), c.getSinkName(), c.getVolume(), c.isMuted(), c.getStreamVolume(), c.isStreamMuted(),
 				c.getDeviceName(), desc.getOrDefault(c.getDeviceName(), c.getDeviceName()),
 				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(), c.getTone(),
-				c.isNoiseSuppression(), mixer.isDeletable(c))).toList();
+				c.isNoiseSuppression(), c.isSpatial(), mixer.isDeletable(c))).toList();
 	}
 
 	/** channel id -> peak level 0..100 (-60..0 dB). The UI polls this ~10x/s while open. */
@@ -145,6 +145,12 @@ public class MixerController {
 	@PostMapping("/channels/{id}/stream-mute")
 	public void streamMute(@PathVariable long id, @RequestBody Map<String, Boolean> body) {
 		mixer.setStreamMute(id, required(body, "muted"));
+	}
+
+	/** Body: {enabled}. Reloads the channel's sink: its apps blip to the default output for ~1 s. */
+	@PostMapping("/channels/{id}/spatial")
+	public void spatial(@PathVariable long id, @RequestBody Map<String, Boolean> body) {
+		mixer.setSpatial(id, required(body, "enabled"));
 	}
 
 	@PostMapping("/channels/{id}/device")

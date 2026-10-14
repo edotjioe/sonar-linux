@@ -239,7 +239,8 @@ function renderChannels() {
         ${(c.mic ? sources : devices).map(d => `<option value="${esc(d.name)}" ${c.deviceName === d.name ? 'selected' : ''}>${esc(d.description)}</option>`).join('')}
       </select>
       <button class="eqbtn" onclick="openEq(${c.id})">EQ: ${esc(profileName(c.eq, c.tone))}</button>
-      ${c.mic ? `<label class="nsbtn" title="Remove background noise (keyboard, fans) with rnnoise"><input type="checkbox" ${c.noiseSuppression ? 'checked' : ''} onchange="setNoise(${c.id}, this.checked)" /> Noise suppression</label>` : ''}
+      ${c.mic ? `<label class="nsbtn" title="Remove background noise (keyboard, fans) with rnnoise"><input type="checkbox" ${c.noiseSuppression ? 'checked' : ''} onchange="setNoise(${c.id}, this.checked)" /> Noise suppression</label>`
+        : `<label class="nsbtn" title="Virtual 7.1 surround for headphones. Restart a game after switching: games pick stereo or surround when they start"><input type="checkbox" ${c.spatial ? 'checked' : ''} onchange="setSpatial(${c.id}, this.checked)" /> Spatial audio</label>`}
       <div class="devlabel">${c.active ? '<span class="live-dot">●</span> live' : '○ offline'} — ${esc(c.sinkName)}</div>
     </div>`).join('');
 }
@@ -328,6 +329,7 @@ async function loadHeadset() {
 }
 
 function setNoise(id, enabled) { api(`/api/channels/${id}/noise`, 'POST', { enabled }).then(loadChannels).catch(e => { alert(e.message); loadChannels(); }); }
+function setSpatial(id, enabled) { api(`/api/channels/${id}/spatial`, 'POST', { enabled }).then(loadChannels).catch(e => { alert(e.message); loadChannels(); }); }
 function toggleMute(id, muted) { api(`/api/channels/${id}/mute`, 'POST', { muted }).then(loadChannels).catch(alert); }
 function setDevice(id, deviceName) { api(`/api/channels/${id}/device`, 'POST', { deviceName }).then(loadChannels).catch(alert); }
 function renameChannel(id) {
