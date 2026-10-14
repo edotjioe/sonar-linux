@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -234,5 +235,28 @@ class PipeWireServiceTest {
 				null);
 
 		assertFalse(conf.contains("spatializer"));
+	}
+
+	@Test
+	void hrtfCandidatesOverrideFirstThenXdgDirsThenFallbacks() {
+		List<String> c = PipeWireService.hrtfCandidates(
+				Map.of("XDG_DATA_DIRS", "/opt/share/:/usr/share", "HOMEBREW_PREFIX", "/opt/brew"), "/home/u");
+		assertEquals("/home/u/.local/share/sonar/hrtf.sofa", c.get(0));
+		assertEquals("/home/u/.local/share/libmysofa/MIT_KEMAR_normal_pinna.sofa", c.get(1));
+		assertEquals("/home/u/.local/share/libmysofa/default.sofa", c.get(2));
+		assertEquals("/opt/share/libmysofa/MIT_KEMAR_normal_pinna.sofa", c.get(3)); // trailing slash trimmed
+		assertTrue(c.contains("/home/linuxbrew/.linuxbrew/share/libmysofa/default.sofa"));
+		assertTrue(c.contains("/home/u/.nix-profile/share/libmysofa/default.sofa"));
+		assertTrue(c.contains("/opt/brew/share/libmysofa/default.sofa"));
+		assertEquals(c.size(), c.stream().distinct().count()); // /usr/share from XDG and the fallbacks: once
+	}
+
+	@Test
+	void hrtfCandidatesUseXdgDefaultsWhenUnset() {
+		List<String> c = PipeWireService.hrtfCandidates(Map.of("XDG_DATA_HOME", "/data"), "/home/u");
+		assertEquals("/data/sonar/hrtf.sofa", c.get(0));
+		assertEquals("/data/libmysofa/MIT_KEMAR_normal_pinna.sofa", c.get(1));
+		assertEquals("/usr/local/share/libmysofa/MIT_KEMAR_normal_pinna.sofa", c.get(3));
+		assertEquals("/usr/share/libmysofa/MIT_KEMAR_normal_pinna.sofa", c.get(5));
 	}
 }

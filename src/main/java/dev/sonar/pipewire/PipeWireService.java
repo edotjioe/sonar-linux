@@ -244,14 +244,44 @@ public class PipeWireService {
 
 	/**
 	 * The HRTF for spatial audio (a SOFA file, from libmysofa), or null when it or PipeWire's SOFA plugin is missing.
-	 * ~/.local/share/sonar/hrtf.sofa overrides it, e.g. with a measured or better-matching head.
+	 * ~/.local/share/sonar/hrtf.sofa overrides it, e.g. with a measured or better-matching head; see hrtfCandidates.
 	 */
 	public Path spatialHrtf() {
 		boolean plugin = Stream.of("/usr/lib/spa-0.2", "/usr/lib64/spa-0.2", "/usr/lib/x86_64-linux-gnu/spa-0.2")
 				.anyMatch(dir -> Files.isReadable(Path.of(dir, "filter-graph", "libspa-filter-graph-plugin-sofa.so")));
-		return !plugin ? null : Stream.of(System.getProperty("user.home") + "/.local/share/sonar/hrtf.sofa",
-				"/usr/share/libmysofa/MIT_KEMAR_normal_pinna.sofa", "/usr/share/libmysofa/default.sofa")
+		if (!plugin) {
+			return null;
+		}
+		return hrtfCandidates(System.getenv(), System.getProperty("user.home")).stream()
 				.map(Path::of).filter(Files::isReadable).findFirst().orElse(null);
+	}
+
+	/**
+	 * Where a SOFA file can be, in order: the user's override, then libmysofa's own HRTFs in each XDG data
+	 * dir, then in the usual package managers' data dirs. Those are listed too because a systemd user
+	 * service often lacks the XDG_DATA_DIRS a login shell sets up (Homebrew only does it in the shell).
+	 */
+	static List<String> hrtfCandidates(Map<String, String> env, String home) {
+		String dataHome = env.getOrDefault("XDG_DATA_HOME", "");
+		if (dataHome.isBlank()) {
+			dataHome = home + "/.local/share";
+		}
+		String dataDirs = env.getOrDefault("XDG_DATA_DIRS", "");
+		if (dataDirs.isBlank()) {
+			dataDirs = "/usr/local/share:/usr/share";
+		}
+		List<String> dirs = new ArrayList<>();
+		dirs.add(dataHome);
+		dirs.addAll(List.of(dataDirs.split(":")));
+		dirs.addAll(List.of("/usr/share", "/usr/local/share",
+				"/home/linuxbrew/.linuxbrew/share", home + "/.linuxbrew/share", // Homebrew
+				home + "/.nix-profile/share", "/nix/var/nix/profiles/default/share", "/run/current-system/sw/share", // Nix
+				home + "/.guix-profile/share", "/run/current-system/profile/share")); // Guix
+		Stream.of("HOMEBREW_PREFIX", "CONDA_PREFIX").map(env::get).filter(v -> v != null && !v.isBlank())
+				.forEach(prefix -> dirs.add(prefix + "/share"));
+		Stream<String> bundled = dirs.stream().filter(d -> !d.isBlank()).map(d -> d.replaceAll("/+$", "")).distinct()
+				.flatMap(d -> Stream.of(d + "/libmysofa/MIT_KEMAR_normal_pinna.sofa", d + "/libmysofa/default.sofa"));
+		return Stream.concat(Stream.of(dataHome + "/sonar/hrtf.sofa"), bundled).toList();
 	}
 
 	/** rnnoise's LADSPA plugin (package noise-suppression-for-voice), or null when it isn't installed. */
