@@ -59,7 +59,6 @@
     <label><input type="checkbox" name="meters" /> Level meters</label>
     <div class="hint">Meters keep the mic in use while Sonar is open.</div>
   </fieldset>
-  <footer><button onclick="$('prefs').close()">Close</button></footer>
 </dialog>
 
 
@@ -97,7 +96,6 @@
     <button id="eqMicPlay" onclick="micAudio?.play()" disabled>▶ Play</button>
     <span class="hint">Hear yourself as others do: record, listen, tune, record again.</span>
   </div>
-  <footer><button onclick="$('eq').close()">Close</button></footer>
 </dialog>
 
 <dialog id="eqImport" class="eq">
@@ -107,7 +105,7 @@
 Filter 1: ON LSC Fc 105 Hz Gain 5.3 dB Q 0.70
 Filter 2: ON PK Fc 2150 Hz Gain -3.1 dB Q 1.80"></textarea>
   <input type="file" accept=".txt,text/plain" onchange="this.files[0]?.text().then(t => $('eqImportText').value = t)" />
-  <footer><button onclick="importEq()">Import</button> <button onclick="$('eqImport').close()">Cancel</button></footer>
+  <footer><button onclick="importEq()">Import</button></footer>
 </dialog>
 
 <script src="/common.js"></script>
@@ -750,6 +748,40 @@ async function deleteProfile() {
     renderChannels();
   } catch (e) { alert(e.message); }
 }
+
+// Panels (dialogs) get a ✕ in the corner, and move by dragging their title; each remembers where it was (per dialog id, in this browser).
+// Double-click the title to centre it again. Kept inside the window, which differs between overlay and window.
+function placeDialog(d, x, y) {
+  d.style.margin = '0';
+  d.style.left = Math.max(0, Math.min(innerWidth - d.offsetWidth, x)) + 'px';
+  d.style.top = Math.max(0, Math.min(innerHeight - d.offsetHeight, y)) + 'px';
+}
+const nativeShowModal = HTMLDialogElement.prototype.showModal;
+HTMLDialogElement.prototype.showModal = function () {
+  nativeShowModal.call(this);
+  let pos = null;
+  try { pos = JSON.parse(localStorage.getItem('panel:' + this.id)); } catch (e) {}
+  if (pos) placeDialog(this, pos.x, pos.y);
+};
+document.querySelectorAll('dialog').forEach(d => {
+  d.insertAdjacentHTML('afterbegin', '<button class="close" title="Close" aria-label="Close" onclick="this.closest(\'dialog\').close()">✕</button>');
+  const title = d.querySelector('h2');
+  title.classList.add('drag');
+  title.addEventListener('pointerdown', e => {
+    const r = d.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+    title.setPointerCapture(e.pointerId);
+    const move = e => placeDialog(d, e.clientX - dx, e.clientY - dy);
+    title.addEventListener('pointermove', move);
+    title.addEventListener('pointerup', () => {
+      title.removeEventListener('pointermove', move);
+      try { localStorage.setItem('panel:' + d.id, JSON.stringify({ x: d.offsetLeft, y: d.offsetTop })); } catch (e) {}
+    }, { once: true });
+  });
+  title.addEventListener('dblclick', () => {
+    d.style.margin = d.style.left = d.style.top = '';
+    try { localStorage.removeItem('panel:' + d.id); } catch (e) {}
+  });
+});
 
 $('prefs').addEventListener('change', e => (e.target.name === 'streamerMode' ? setStreamer(e.target.checked) : savePrefs()).catch(alert));
 if (document.documentElement.classList.contains('overlay')) {

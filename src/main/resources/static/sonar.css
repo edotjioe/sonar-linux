@@ -48,8 +48,10 @@ h1.offline::before { background: var(--danger); box-shadow: 0 0 10px var(--dange
 .version { font-family: var(--font-mono); font-size: 12px; font-weight: normal; color: var(--faint); margin-left: -6px; text-transform: none; letter-spacing: 0; }
 dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); padding: 20px 22px; width: min(440px, 90vw);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 20px 100%, 0 calc(100% - 20px)); }
-dialog::backdrop { background: rgba(4, 9, 14, .72); backdrop-filter: blur(2px); }
+dialog::backdrop { background: transparent; } /* the panels sit on the mixer without dimming it further */
 dialog h2 { font-family: var(--font-display); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; font-size: 16px; margin: 0 0 14px; }
+dialog > button.close { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; padding: 0; line-height: 1; }
+dialog h2.drag { padding-right: 36px; cursor: move; user-select: none; touch-action: none; }
 dialog fieldset { border: 0; padding: 0; margin: 0 0 14px; }
 dialog legend { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
 dialog label { display: block; margin: 4px 0; cursor: pointer; }
