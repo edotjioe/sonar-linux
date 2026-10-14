@@ -58,6 +58,14 @@ public record EqBand(String type, double freq, double gain, double q) {
 		return Arrays.stream(tone).map(g -> clamp(g, -MAX_GAIN, MAX_GAIN)).toArray();
 	}
 
+	/** Preamp range (dB): AutoEq's headroom is usually -3..-10; boosts are what the bands are for. */
+	public static final double MIN_PREAMP = -24;
+
+	/** Validate and clamp a preamp from the API. */
+	public static double checkPreamp(double preamp) {
+		return clamp(preamp, MIN_PREAMP, MAX_GAIN);
+	}
+
 	private EqBand checked() {
 		if (!TYPES.contains(type)) {
 			throw new IllegalArgumentException("Unknown EQ band type: " + type);

@@ -1,6 +1,8 @@
 package dev.sonar.domain;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -57,6 +59,47 @@ public class Channel {
 
 	/** Bass, Voice, Treble gains (dB), see {@link EqBand#tone}; null (older rows) = all 0. */
 	private double[] tone;
+
+	/** EQ preamp (dB, {@link EqBand#checkPreamp}): a gain before the bands, e.g. AutoEq's headroom for its boosts. */
+	@Column(columnDefinition = "double precision default 0")
+	private double preamp;
+
+	public double getPreamp() {
+		return preamp;
+	}
+
+	public void setPreamp(double preamp) {
+		this.preamp = preamp;
+	}
+
+	/** An EQ as remembered for one output: see {@link #eqByOutput}. */
+	public record SavedEq(List<EqBand> bands, double[] tone, double preamp) {
+	}
+
+	/**
+	 * The EQ this channel had on each output it played to (key: MixerService.outputKey), so it comes back when
+	 * the channel returns there. The current output's EQ is the fields above; it's stored here when the output changes.
+	 */
+	@JdbcTypeCode(SqlTypes.JSON)
+	private Map<String, SavedEq> eqByOutput;
+
+	/** The output key the current EQ belongs to; null until first known. */
+	private String eqOutput;
+
+	public Map<String, SavedEq> getEqByOutput() {
+		if (eqByOutput == null) {
+			eqByOutput = new HashMap<>();
+		}
+		return eqByOutput;
+	}
+
+	public String getEqOutput() {
+		return eqOutput;
+	}
+
+	public void setEqOutput(String eqOutput) {
+		this.eqOutput = eqOutput;
+	}
 
 	/** Input channel (virtual mic) instead of an output channel. */
 	@Column(columnDefinition = "boolean default false")

@@ -60,6 +60,14 @@ class EqBandTest {
 	}
 
 	@Test
+	void checkPreampClampsAndPassesThrough() {
+		assertEquals(-24.0, EqBand.checkPreamp(-30));
+		assertEquals(12.0, EqBand.checkPreamp(20));
+		assertEquals(-6.2, EqBand.checkPreamp(-6.2), 1e-9);
+		assertEquals(-24.0, EqBand.checkPreamp(Double.NaN));
+	}
+
+	@Test
 	void fromLegacyDropsFlatBandsAndNullIsEmpty() {
 		assertEquals(List.of(
 				new EqBand("peaking", 31, 3, 1.41),

@@ -39,7 +39,7 @@ public class BaseStation {
 	private static final byte TX = 0x06, RX = 0x07;
 	private static final byte CHATMIX_ENABLE = 0x49, CHATMIX = 0x45;
 	private static final byte STATUS = (byte) 0xb0, MIC_MUTE = (byte) 0xbb;
-	private static final long STATUS_EVERY_MS = 10_000;
+	private static final long STATUS_EVERY_MS = 3_000; // also how soon a channel's EQ follows the headset on/off
 
 	/** battery/spare: percent; null = unknown (headset off or no base). */
 	public record Headset(boolean connected, boolean charging, Integer battery, Integer spareBattery, boolean micMuted) {
@@ -133,6 +133,9 @@ public class BaseStation {
 							micMuted(buf[2] != 0);
 						} else if (buf[0] == TX && buf[1] == STATUS) {
 							Headset h = parseStatus(buf);
+							if (h.connected() != headset.connected() || statusAt == 0) {
+								mixer.setHeadsetConnected(h.connected());
+							}
 							headset = h;
 							statusAt = System.nanoTime();
 							if (h.connected()) {

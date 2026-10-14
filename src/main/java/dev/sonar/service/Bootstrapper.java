@@ -56,12 +56,14 @@ public class Bootstrapper implements ApplicationRunner {
 		pw.stopAllEq();
 		pw.unloadSonarModules();
 		// rewrite the built-ins every start, so changed preset definitions reach existing databases
-		EqProfile.PRESETS.forEach((name, bands) -> profiles.findByName(name).ifPresentOrElse(p -> {
+		EqProfile.PRESETS.forEach((name, bands) -> {
+			EqProfile p = profiles.findByName(name).orElseGet(() -> new EqProfile(name, bands, true));
 			if (p.isBuiltIn()) {
 				p.setBands(bands);
+				p.setKind(EqProfile.presetKind(name));
 				profiles.save(p);
 			}
-		}, () -> profiles.save(new EqProfile(name, bands, true))));
+		});
 		mixer.loadStreamSink(); // before the channels: their stream feeds play into it
 		// restore existing channels first; createChannel loads its own modules, so new ones must come after
 		for (var channel : channels.findAll()) {

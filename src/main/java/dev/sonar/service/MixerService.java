@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
@@ -24,7 +25,13 @@ import dev.sonar.repo.EqProfileRepository;
 import dev.sonar.repo.PreferencesRepository;
 import jakarta.annotation.PreDestroy;
 
-/** Business rules: creates channels, routes apps, applies volume/mute/device. */
+/**
+ * Business rules: creates channels, routes apps, applies volume/mute/device.
+ *
+ * Methods that change a channel are synchronized: each loads the channel, changes a field and saves all of it, so
+ * two at once (e.g. a profile's bands, tone and preamp, sent together) would save over each other's change.
+ * ponytail: one lock for all channels; an EQ restart (≤ 2 s) holds up other changes meanwhile.
+ */
 @Service
 public class MixerService {
 
@@ -61,7 +68,7 @@ public class MixerService {
 		return "sonar_" + name.trim().toLowerCase().replaceAll("[^a-z0-9]+", "_");
 	}
 
-	public Channel createChannel(String name, boolean mic) {
+	public synchronized Channel createChannel(String name, boolean mic) {
 		name = checkName(name);
 		String sinkName = sinkNameFor(name);
 		if (channels.findBySinkName(sinkName).isPresent() || channels.findByName(name).isPresent()
@@ -82,7 +89,7 @@ public class MixerService {
 	 * ponytail: PipeWire's device.description keeps the old name until the next restart;
 	 * reloading the null-sink live would drop audio for a second.
 	 */
-	public Channel rename(long id, String name) {
+	public synchronized Channel rename(long id, String name) {
 		Channel c = require(id);
 		name = checkName(name);
 		channels.findByName(name).filter(other -> !other.getId().equals(id)).ifPresent(other -> {
@@ -93,7 +100,7 @@ public class MixerService {
 	}
 
 	/** Positions follow the order of ids; channels not listed keep their relative order after them. */
-	public void reorder(List<Long> ids) {
+	public synchronized void reorder(List<Long> ids) {
 		List<Channel> all = new ArrayList<>(listChannels());
 		all.sort(Comparator.comparingInt(c -> {
 			int i = ids.indexOf(c.getId());
@@ -118,7 +125,7 @@ public class MixerService {
 				.noneMatch(name -> !name.isBlank() && sinkNameFor(name).equals(c.getSinkName()));
 	}
 
-	public void deleteChannel(long id) {
+	public synchronized void deleteChannel(long id) {
 		Channel c = require(id);
 		if (!isDeletable(c)) {
 			throw new IllegalArgumentException("Built-in channels can't be deleted: " + c.getName());
@@ -162,7 +169,7 @@ public class MixerService {
 		}
 	}
 
-	public Channel setVolume(long id, int volume) {
+	public synchronized Channel setVolume(long id, int volume) {
 		Channel c = require(id);
 		c.setVolume(Math.max(0, Math.min(c.isMic() ? MIC_MAX_VOLUME : 100, volume)));
 		if (c.isMic()) {
@@ -173,7 +180,7 @@ public class MixerService {
 		return channels.save(c);
 	}
 
-	public Channel setMute(long id, boolean muted) {
+	public synchronized Channel setMute(long id, boolean muted) {
 		Channel c = require(id);
 		c.setMuted(muted);
 		if (c.isMic()) {
@@ -185,14 +192,14 @@ public class MixerService {
 	}
 
 	/** Streamer mode: the channel's volume in the stream mix. Applied live, and kept while streamer mode is off. */
-	public Channel setStreamVolume(long id, int volume) {
+	public synchronized Channel setStreamVolume(long id, int volume) {
 		Channel c = requireOutput(id);
 		c.setStreamVolume(Math.max(0, Math.min(100, volume)));
 		pw.setGain(c.getSinkName() + "_stream_in", streamGain(c));
 		return channels.save(c);
 	}
 
-	public Channel setStreamMute(long id, boolean muted) {
+	public synchronized Channel setStreamMute(long id, boolean muted) {
 		Channel c = requireOutput(id);
 		c.setStreamMuted(muted);
 		pw.setGain(c.getSinkName() + "_stream_in", streamGain(c));
@@ -206,7 +213,7 @@ public class MixerService {
 	 * Streamer mode on: the Sonar Stream sink, plus a feed into it from every output channel's EQ process.
 	 * Restarts those processes, so every channel blips once.
 	 */
-	public void setStreamerMode(boolean on) {
+	public synchronized void setStreamerMode(boolean on) {
 		Preferences p = preferences.get();
 		p.setStreamerMode(on);
 		preferences.save(p);
@@ -221,7 +228,7 @@ public class MixerService {
 	}
 
 	/** Bootstrapper, after unloading every sonar module and before the channels: the stream sink, if streamer mode is on. */
-	public void loadStreamSink() {
+	public synchronized void loadStreamSink() {
 		streamModule = -1;
 		if (preferences.get().isStreamerMode()) {
 			streamModule = pw.loadNullSink(PipeWireService.STREAM_SINK, "Sonar Stream", false);
@@ -230,15 +237,74 @@ public class MixerService {
 		}
 	}
 
-	public Channel setDevice(long id, String deviceName) {
+	public synchronized Channel setDevice(long id, String deviceName) {
 		Channel c = require(id);
 		c.setDeviceName(deviceName);
+		followOutput(c);
 		restartEq(c);
 		return channels.save(c);
 	}
 
+	/** Headset on/off as the base station reports it; null until it does (or without a base station). */
+	private volatile Boolean headsetOn;
+
+	/** The base station saw the headset turn on or off: its channels switch to the EQ they had there. */
+	public synchronized void setHeadsetConnected(boolean on) {
+		headsetOn = on;
+		for (Channel c : listChannels()) {
+			String before = c.getEqOutput();
+			if (c.isMic()) {
+				continue;
+			}
+			if (followOutput(c)) {
+				restartEq(c);
+			}
+			if (!Objects.equals(before, c.getEqOutput())) {
+				channels.save(c); // also a first visit: the previous output's EQ was just stored
+			}
+		}
+	}
+
+	/**
+	 * Which output a channel's EQ is for: its device, and for the Arctis base station also whether the headset is on.
+	 * With it off, the base plays to the speakers on its line out, on the same PipeWire device. null = not known yet.
+	 *
+	 * ponytail: the base station's device is recognised by name; fine while BaseStation only knows the Nova Pro.
+	 */
+	String outputKey(Channel c) {
+		String device = c.getDeviceName();
+		if (c.isMic() || device == null || !device.contains("Arctis_Nova_Pro")) {
+			return device;
+		}
+		Boolean on = headsetOn;
+		return on == null ? null : on ? device : device + "#speakers";
+	}
+
+	/**
+	 * Point the channel's EQ at its current output: remember the EQ it had on the previous one, and bring back the
+	 * one it had here (a first visit keeps the current EQ). True when the EQ changed (the caller restarts it).
+	 */
+	boolean followOutput(Channel c) {
+		String key = outputKey(c);
+		if (key == null || key.equals(c.getEqOutput())) {
+			return false;
+		}
+		if (c.getEqOutput() != null) {
+			c.getEqByOutput().put(c.getEqOutput(), new Channel.SavedEq(c.getEq(), c.getTone(), c.getPreamp()));
+		}
+		c.setEqOutput(key);
+		Channel.SavedEq saved = c.getEqByOutput().get(key);
+		if (saved == null) {
+			return false;
+		}
+		c.setEq(saved.bands());
+		c.setTone(saved.tone());
+		c.setPreamp(saved.preamp());
+		return true;
+	}
+
 	/** Mic only: switch rnnoise on/off. Restarts the mic's EQ process, so the virtual mic blips for a moment. */
-	public Channel setNoiseSuppression(long id, boolean enabled) {
+	public synchronized Channel setNoiseSuppression(long id, boolean enabled) {
 		Channel c = require(id);
 		if (!c.isMic()) {
 			throw new IllegalArgumentException("Noise suppression is only for the mic channel");
@@ -256,7 +322,7 @@ public class MixerService {
 	 * Output only: virtual 7.1 surround. Reloads the channel's sink (as 7.1, or back to stereo), so its apps drop to
 	 * the default output until StreamWatcher moves them back (~1 s). Games pick their channel count when they start.
 	 */
-	public Channel setSpatial(long id, boolean enabled) {
+	public synchronized Channel setSpatial(long id, boolean enabled) {
 		Channel c = requireOutput(id);
 		if (enabled && pw.spatialHrtf() == null) {
 			throw new IllegalStateException("Spatial audio needs PipeWire's SOFA plugin and an HRTF: install libmysofa"
@@ -272,12 +338,12 @@ public class MixerService {
 	}
 
 	/** The headset's own mute button (via the base station): mirror it onto the mic channel. */
-	public void setMicMuted(boolean muted) {
+	public synchronized void setMicMuted(boolean muted) {
 		listChannels().stream().filter(c -> c.isMic() && c.isMuted() != muted).forEach(c -> setMute(c.getId(), muted));
 	}
 
 	/** Move the ChatMix dial and re-apply the Game/Chat volumes it scales. */
-	public void setChatMix(int mix) {
+	public synchronized void setChatMix(int mix) {
 		Preferences p = preferences.get();
 		p.setChatMix(Math.max(-100, Math.min(100, mix)));
 		preferences.save(p);
@@ -287,11 +353,16 @@ public class MixerService {
 	}
 
 	/**
-	 * An output channel's gain after its EQ: its volume, scaled down by ChatMix for Game/Chat, 0 when muted. Cubed
-	 * like pactl's volume %, so the slider feels the same. The sink itself stays at 100%: its monitor feeds the stream mix.
+	 * The gain at the end of a channel's EQ chain: its preamp, and for an output channel its volume, scaled down by
+	 * ChatMix for Game/Chat, 0 when muted. Volume is cubed like pactl's %, so the slider feels the same. An output's
+	 * sink itself stays at 100%: its monitor feeds the stream mix. The mic's volume and mute stay on its source.
 	 */
 	private double gain(Channel c) {
-		return c.isMuted() ? 0 : cube(mixed(c.getVolume(), c.getSinkName(), preferences.get().getChatMix()));
+		double preamp = Math.pow(10, c.getPreamp() / 20);
+		if (c.isMic()) {
+			return preamp;
+		}
+		return c.isMuted() ? 0 : preamp * cube(mixed(c.getVolume(), c.getSinkName(), preferences.get().getChatMix()));
 	}
 
 	/** The channel's gain into the stream mix (ChatMix only affects what you hear). */
@@ -315,7 +386,7 @@ public class MixerService {
 	}
 
 	/** Set a channel's EQ. Freq/gain/Q apply live; added/removed bands or a type change restart the EQ process (a short blip). */
-	public Channel setEq(long id, List<EqBand> bands) {
+	public synchronized Channel setEq(long id, List<EqBand> bands) {
 		Channel c = require(id);
 		List<EqBand> checked = EqBand.check(bands);
 		boolean sameTypes = c.getEq().stream().map(EqBand::type).toList()
@@ -330,10 +401,18 @@ public class MixerService {
 	}
 
 	/** Set a channel's Bass/Voice/Treble (dB, clamped to ±MAX_GAIN); applied live. */
-	public Channel setTone(long id, double[] tone) {
+	public synchronized Channel setTone(long id, double[] tone) {
 		Channel c = require(id);
 		c.setTone(EqBand.checkTone(tone));
 		pw.setEqParams(c.getSinkName(), chain(c));
+		return channels.save(c);
+	}
+
+	/** Set a channel's EQ preamp (dB, clamped); applied live as part of the chain's gain. */
+	public synchronized Channel setPreamp(long id, double preamp) {
+		Channel c = require(id);
+		c.setPreamp(EqBand.checkPreamp(preamp));
+		pw.setGain(c.getSinkName() + "_eq_in", gain(c));
 		return channels.save(c);
 	}
 
@@ -342,19 +421,23 @@ public class MixerService {
 		return Stream.concat(c.getEq().stream(), EqBand.tone(c.getTone()).stream()).toList();
 	}
 
-	/** Create or overwrite a custom profile by name. Presets are read-only. */
-	public EqProfile saveProfile(String name, List<EqBand> bands, double[] tone) {
+	/** Create or overwrite a custom profile by name, in the mic's list or the outputs'. Presets are read-only. */
+	public EqProfile saveProfile(String name, List<EqBand> bands, double[] tone, double preamp, boolean mic) {
 		name = checkName(name);
 		List<EqBand> checked = EqBand.check(bands);
 		double[] checkedTone = EqBand.checkTone(tone);
 		EqProfile p = profiles.findByName(name).orElse(null);
 		if (p == null) {
 			p = new EqProfile(name, checked, false);
+			p.setKind(mic ? EqProfile.MIC : EqProfile.OUTPUT);
 		} else if (p.isBuiltIn()) {
 			throw new IllegalArgumentException("Can't overwrite a built-in profile: " + name);
+		} else if (!p.fits(mic)) {
+			throw new IllegalArgumentException("An " + (mic ? "output" : "mic") + " EQ profile is already called " + name);
 		}
 		p.setBands(checked);
 		p.setTone(checkedTone);
+		p.setPreamp(EqBand.checkPreamp(preamp));
 		return profiles.save(p);
 	}
 
@@ -372,7 +455,7 @@ public class MixerService {
 	 * Bootstrapper, which unloads all sonar modules first — so we always start
 	 * from a clean slate and store fresh module ids (PipeWire reuses ids).
 	 */
-	public Channel applyChannel(Channel c) {
+	public synchronized Channel applyChannel(Channel c) {
 		String device = c.getDeviceName();
 		// node names have no spaces; one that does is an error message an older version saved as the device
 		if (device == null || device.isBlank() || device.chars().anyMatch(Character::isWhitespace)) {
@@ -382,6 +465,7 @@ public class MixerService {
 			device = realMic(device);
 		}
 		c.setDeviceName(device);
+		followOutput(c);
 		c.setNullSinkModule(c.isMic()
 				? pw.loadVirtualSource(c.getSinkName(), c.getName())
 				: pw.loadNullSink(c.getSinkName(), c.getName(), c.isSpatial()));
@@ -412,7 +496,7 @@ public class MixerService {
 
 	private void startEq(Channel c) {
 		pw.startEq(c.getSinkName(), c.getName(), c.getDeviceName(), chain(c), c.isMic(), c.isNoiseSuppression(),
-				c.isMic() ? null : gain(c), !c.isMic() && preferences.get().isStreamerMode() ? streamGain(c) : null,
+				gain(c), !c.isMic() && preferences.get().isStreamerMode() ? streamGain(c) : null,
 				c.isSpatial());
 	}
 
@@ -421,6 +505,17 @@ public class MixerService {
 		if (!c.isMic() || pw.isEqRunning(c.getSinkName())) {
 			startEq(c);
 		}
+	}
+
+	/** Mic test: a few seconds of the virtual mic, i.e. what others hear (noise suppression, EQ, volume), as WAV. */
+	public byte[] recordMicTest(int seconds) {
+		Channel c = listChannels().stream().filter(Channel::isMic).findFirst()
+				.orElseThrow(() -> new IllegalArgumentException("There's no mic channel"));
+		micLastUsed.put(c.getSinkName(), System.currentTimeMillis());
+		if (!pw.isEqRunning(c.getSinkName())) {
+			startEq(c); // now, rather than on syncMic's next tick: the recording would start silent
+		}
+		return pw.recordWav(c.getSinkName(), seconds);
 	}
 
 	/** Mic sink name -> when something last recorded from it. */
@@ -432,7 +527,7 @@ public class MixerService {
 	 * It stops 5 s after the last user: apps often close and reopen the mic, e.g. when joining a call.
 	 */
 	@Scheduled(fixedDelay = 1000)
-	public void syncMic() {
+	public synchronized void syncMic() {
 		long now = System.currentTimeMillis();
 		for (Channel c : listChannels()) {
 			if (!c.isMic()) {

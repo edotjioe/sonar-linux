@@ -26,7 +26,20 @@ public class EqProfile {
 		PRESETS.put("Voice Clarity", List.of(new EqBand("highpass", 90, 0, 0.71), new EqBand("peaking", 300, -3, 1),
 				new EqBand("peaking", 3000, 4, 0.8)));
 		PRESETS.put("Treble Boost", List.of(new EqBand("highshelf", 4000, 6, 0.71)));
+		PRESETS.put("Broadcast", List.of(new EqBand("highpass", 80, 0, 0.71), new EqBand("lowshelf", 180, 2, 0.71),
+				new EqBand("peaking", 350, -2.5, 1), new EqBand("peaking", 4000, 3, 0.8), new EqBand("peaking", 7500, -2, 3)));
 	}
+
+	/** Which list a preset is in: the mic's, the outputs', or both. */
+	public static String presetKind(String name) {
+		return switch (name) {
+			case "Flat", "Voice Clarity" -> BOTH;
+			case "Broadcast" -> MIC;
+			default -> OUTPUT;
+		};
+	}
+
+	public static final String OUTPUT = "output", MIC = "mic", BOTH = "both";
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -44,7 +57,22 @@ public class EqProfile {
 	/** Bass, Voice, Treble (dB), see {@link EqBand#tone}; null (older rows, built-ins) = all 0. */
 	private double[] tone;
 
+	/** EQ preamp (dB, {@link EqBand#checkPreamp}): a gain before the bands, e.g. AutoEq's headroom for its boosts. */
+	@Column(columnDefinition = "double precision default 0")
+	private double preamp;
+
+	public double getPreamp() {
+		return preamp;
+	}
+
+	public void setPreamp(double preamp) {
+		this.preamp = preamp;
+	}
+
 	private boolean builtIn;
+
+	/** {@link #OUTPUT}, {@link #MIC} or {@link #BOTH}: which channels' EQ list it's in. null (older rows) = output. */
+	private String kind;
 
 	public EqProfile() {
 	}
@@ -77,6 +105,19 @@ public class EqProfile {
 
 	public void setTone(double[] tone) {
 		this.tone = tone;
+	}
+
+	public String getKind() {
+		return kind == null ? OUTPUT : kind;
+	}
+
+	public void setKind(String kind) {
+		this.kind = kind;
+	}
+
+	/** In the EQ list of a mic channel (mic) or an output channel. */
+	public boolean fits(boolean mic) {
+		return getKind().equals(BOTH) || getKind().equals(mic ? MIC : OUTPUT);
 	}
 
 	public boolean isBuiltIn() {

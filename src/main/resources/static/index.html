@@ -69,7 +69,9 @@
     <select id="eqProfile" onchange="pickProfile(this.value)"></select>
     <button onclick="saveProfile()">Save as…</button>
     <button class="danger" id="eqDelete" onclick="deleteProfile()">Delete</button>
+    <button onclick="$('eqImportText').value = ''; $('eqImport').showModal()" title="Paste or load filters from AutoEq, Squiglink or REW (Equalizer APO format)">Import…</button>
     <button id="eqViewBtn" onclick="setEqView(eqView === 'curve' ? 'sliders' : 'curve')"></button>
+    <label title="Gain before the EQ: negative leaves headroom for boosts">Preamp <input type="number" id="eqPreamp" min="-24" max="12" step="0.1" onchange="preampChanged()"> dB</label>
   </div>
   <div class="bands" id="eqSliders"></div>
   <svg id="eqGraph" class="eqgraph" viewBox="0 0 600 250"></svg>
@@ -90,7 +92,22 @@
     <label>Voice <input type="range" min="-12" max="12" step="0.5"> <span></span></label>
     <label>Treble <input type="range" min="-12" max="12" step="0.5"> <span></span></label>
   </div>
+  <div class="eqmic" id="eqMic" hidden>
+    <button id="eqMicRec" onclick="micTest()">● Record 5 s</button>
+    <button id="eqMicPlay" onclick="micAudio?.play()" disabled>▶ Play</button>
+    <span class="hint">Hear yourself as others do: record, listen, tune, record again.</span>
+  </div>
   <footer><button onclick="$('eq').close()">Close</button></footer>
+</dialog>
+
+<dialog id="eqImport" class="eq">
+  <h2>Import EQ</h2>
+  <div class="hint">Equalizer APO parametric filters, e.g. AutoEq's "ParametricEQ.txt". Replaces the points and the preamp.</div>
+  <textarea id="eqImportText" rows="12" placeholder="Preamp: -6.2 dB
+Filter 1: ON LSC Fc 105 Hz Gain 5.3 dB Q 0.70
+Filter 2: ON PK Fc 2150 Hz Gain -3.1 dB Q 1.80"></textarea>
+  <input type="file" accept=".txt,text/plain" onchange="this.files[0]?.text().then(t => $('eqImportText').value = t)" />
+  <footer><button onclick="importEq()">Import</button> <button onclick="$('eqImport').close()">Cancel</button></footer>
 </dialog>
 
 <script src="/common.js"></script>
@@ -238,7 +255,7 @@ function renderChannels() {
       <select onchange="setDevice(${c.id}, this.value)">
         ${(c.mic ? sources : devices).map(d => `<option value="${esc(d.name)}" ${c.deviceName === d.name ? 'selected' : ''}>${esc(d.description)}</option>`).join('')}
       </select>
-      <button class="eqbtn" onclick="openEq(${c.id})">EQ: ${esc(profileName(c.eq, c.tone))}</button>
+      <button class="eqbtn" onclick="openEq(${c.id})" title="${c.mic ? '' : 'EQ for ' + esc(eqOutputName(c)) + ': each output keeps its own'}">EQ: ${esc(profileName(c))}</button>
       ${c.mic ? `<label class="nsbtn" title="Remove background noise (keyboard, fans) with rnnoise"><input type="checkbox" ${c.noiseSuppression ? 'checked' : ''} onchange="setNoise(${c.id}, this.checked)" /> Noise suppression</label>`
         : `<label class="nsbtn" title="Virtual 7.1 surround for headphones. Restart a game after switching: games pick stereo or surround when they start"><input type="checkbox" ${c.spatial ? 'checked' : ''} onchange="setSpatial(${c.id}, this.checked)" /> Spatial audio</label>`}
       <div class="devlabel">${c.active ? '<span class="live-dot">●</span> live' : '○ offline'} — ${esc(c.sinkName)}</div>
@@ -354,8 +371,18 @@ const sameBand = (a, b) => a.type === b.type && Math.abs(a.freq / b.freq - 1) < 
   && Math.abs(a.gain - b.gain) < 0.05 && Math.abs(a.q - b.q) < 0.005;
 const sameEq = (a, b) => a.length === b.length && a.every((band, i) => sameBand(band, b[i]));
 const sameTone = (a, b) => a.every((g, i) => Math.abs(g - b[i]) < 0.05);
-function matchProfile(bands, tone) { return eqInfo.profiles.find(p => sameEq(p.bands, bands) && sameTone(p.tone, tone)); }
-function profileName(bands, tone) { return matchProfile(bands, tone)?.name ?? 'Custom'; }
+// the mic and the outputs each have their own profile list (EqProfile.kind); Flat and a few presets are in both
+const profilesFor = mic => eqInfo.profiles.filter(p => p.kind === 'both' || (p.kind === 'mic') === mic);
+const eqIsMic = () => channelsCache.find(c => c.id === eqChannel)?.mic ?? false;
+function matchProfile(bands, tone, preamp, mic) {
+  return profilesFor(mic).find(p => sameEq(p.bands, bands) && sameTone(p.tone, tone) && Math.abs(p.preamp - preamp) < 0.05);
+}
+// each output channel keeps an EQ per output (MixerService.outputKey); the Arctis base counts twice: headset and speakers
+function eqOutputName(c) {
+  const key = c.eqOutput || c.deviceName || '';
+  return key.endsWith('#speakers') ? 'Speakers (base station)' : key.includes('Arctis_Nova_Pro') ? 'Headset' : c.deviceDescription;
+}
+function profileName(c) { return matchProfile(c.eq, c.tone, c.preamp, c.mic)?.name ?? 'Custom'; }
 function fmtHz(f) { return f >= 1000 ? +(f / 1000).toFixed(f < 10000 ? 2 : 1) + 'k' : Math.round(f); }
 
 // Graph: log frequency (20 Hz–20 kHz) × dB. The curve is the real response of the filter-chain:
@@ -373,6 +400,69 @@ const EQ_MAX_BANDS = 10; // EqBand.MAX_BANDS
 const EQ_TONE = [{ type: 'lowshelf', freq: 100, q: 0.71 }, { type: 'peaking', freq: 2000, q: 0.7 },
   { type: 'highshelf', freq: 6000, q: 0.71 }];
 let eqTone = [0, 0, 0], eqToneTimer;
+let eqPreamp = 0;
+function preampChanged() {
+  eqPreamp = Math.max(-24, Math.min(12, +$('eqPreamp').value || 0));
+  sendPreamp();
+}
+function sendPreamp() {
+  $('eqPreamp').value = eqPreamp;
+  renderEqHeader();
+  const preamp = eqPreamp;
+  api(`/api/channels/${eqChannel}/preamp`, 'POST', { preamp }).catch(alert);
+  channelsCache.find(c => c.id === eqChannel).preamp = preamp;
+  renderChannels();
+}
+// Equalizer APO's parametric format (AutoEq, Squiglink, REW): "Preamp: -6.2 dB", "Filter 1: ON PK Fc 105 Hz Gain 5.3 dB Q 0.70"
+const APO_TYPES = { PK: 'peaking', PEQ: 'peaking', LS: 'lowshelf', LSC: 'lowshelf', HS: 'highshelf', HSC: 'highshelf',
+  LP: 'lowpass', LPQ: 'lowpass', HP: 'highpass', HPQ: 'highpass', BP: 'bandpass', NO: 'notch' };
+function parseApo(text) {
+  let preamp = 0, skipped = 0;
+  const bands = [];
+  for (const line of text.split(/\r?\n/)) {
+    const pre = line.match(/^\s*Preamp:\s*([-+]?[\d.]+)\s*dB/i);
+    if (pre) preamp += +pre[1];
+    const f = line.match(/^\s*Filter\s*\d*:\s*ON\s+([A-Z]+)\s+Fc\s+([\d.]+)\s*Hz(?:\s+Gain\s+([-+]?[\d.]+)\s*dB)?(?:\s+Q\s+([\d.]+))?/i);
+    if (!f) continue;
+    const type = APO_TYPES[f[1].toUpperCase()];
+    if (!type) { skipped++; continue; }
+    bands.push({ type, freq: +f[2], gain: hasGain({ type }) ? +(f[3] ?? 0) : 0, q: +(f[4] ?? 0.71) });
+  }
+  return { bands, preamp, skipped };
+}
+// Mic test: the server records the virtual mic (after noise suppression and EQ) and sends back a WAV
+let micAudio;
+async function micTest() {
+  const rec = $('eqMicRec');
+  rec.disabled = true;
+  rec.textContent = '● Recording… speak now';
+  try {
+    const r = await fetch('/api/mic/test', { method: 'POST' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || r.statusText);
+    if (micAudio) URL.revokeObjectURL(micAudio.src);
+    micAudio = new Audio(URL.createObjectURL(await r.blob()));
+    $('eqMicPlay').disabled = false;
+    micAudio.play();
+  } catch (e) { alert(e.message); }
+  rec.disabled = false;
+  rec.textContent = '● Record 5 s';
+}
+function importEq() {
+  const { bands, preamp, skipped } = parseApo($('eqImportText').value);
+  if (!bands.length) return alert('No filters found: expected lines like "Filter 1: ON PK Fc 105 Hz Gain 5.3 dB Q 0.70".');
+  const notes = [];
+  if (skipped) notes.push(`${skipped} filter(s) of an unsupported type were skipped.`);
+  if (bands.length > EQ_MAX_BANDS) notes.push(`Only the first ${EQ_MAX_BANDS} of ${bands.length} filters were kept.`);
+  if (bands.some(b => Math.abs(b.gain) > eqInfo.maxGain)) notes.push(`Gains were limited to ±${eqInfo.maxGain} dB.`);
+  eqCur = bands.slice(0, EQ_MAX_BANDS).map(b => ({ ...b, gain: Math.max(-eqInfo.maxGain, Math.min(eqInfo.maxGain, b.gain)),
+    freq: Math.max(20, Math.min(20000, b.freq)), q: Math.max(0.1, Math.min(10, b.q)) }));
+  eqPreamp = Math.max(-24, Math.min(12, preamp));
+  eqSel = 0;
+  $('eqImport').close();
+  bandChanged();
+  sendPreamp();
+  if (notes.length) alert(notes.join('\n'));
+}
 function toneChanged() {
   eqTone = [...document.querySelectorAll('.eqtone input')].map(i => +i.value);
   sendTone();
@@ -461,10 +551,13 @@ function bandDb(f, { type, freq, gain, q }) {
 function openEq(id) {
   eqChannel = id;
   const c = channelsCache.find(c => c.id === id);
-  $('eqTitle').textContent = 'EQ — ' + c.name;
+  $('eqTitle').textContent = 'EQ — ' + c.name + (c.mic ? '' : ' · ' + eqOutputName(c));
   $('eq').style.setProperty('--ch', channelAccentVar(c.sinkName));
   eqCur = c.eq.map(b => ({ ...b }));
   eqTone = [...c.tone];
+  eqPreamp = c.preamp;
+  $('eqPreamp').value = eqPreamp;
+  $('eqMic').hidden = !c.mic;
   const m = eqInfo.maxGain;
   $('eqGraph').innerHTML =
     EQ_REGIONS.map(([n, a, b]) => `<rect class="region" x="${eqX(a) + 1}" y="2" width="${eqX(b) - eqX(a) - 2}" height="20"/>
@@ -609,8 +702,8 @@ graph.addEventListener('focusin', e => {
   drawEq();
 });
 function renderEqHeader() {
-  const match = matchProfile(eqCur, eqTone);
-  $('eqProfile').innerHTML = (match ? '' : '<option value="" selected>Custom</option>') + eqInfo.profiles.map(p =>
+  const match = matchProfile(eqCur, eqTone, eqPreamp, eqIsMic());
+  $('eqProfile').innerHTML = (match ? '' : '<option value="" selected>Custom</option>') + profilesFor(eqIsMic()).map(p =>
     `<option value="${p.id}" ${p === match ? 'selected' : ''}>${esc(p.name)}${p.builtIn ? '' : ' ★'}</option>`).join('');
   $('eqDelete').disabled = !match || match.builtIn;
   drawEq();
@@ -632,21 +725,23 @@ function pickProfile(id) {
   if (!p) return;
   eqCur = p.bands.map(b => ({ ...b }));
   eqTone = [...p.tone];
+  eqPreamp = p.preamp;
   bandChanged();
   sendTone();
+  sendPreamp();
 }
 async function saveProfile() {
   const name = prompt('Profile name', '')?.trim();
   if (!name) return;
   try {
-    await api('/api/eq/profiles', 'POST', { name, bands: eqCur, tone: eqTone });
+    await api('/api/eq/profiles', 'POST', { name, bands: eqCur, tone: eqTone, preamp: eqPreamp, mic: eqIsMic() });
     await loadEq();
     renderEqHeader();
     renderChannels();
   } catch (e) { alert(e.message); }
 }
 async function deleteProfile() {
-  const p = matchProfile(eqCur, eqTone);
+  const p = matchProfile(eqCur, eqTone, eqPreamp, eqIsMic());
   if (!p || p.builtIn || !confirm(`Delete profile "${p.name}"?`)) return;
   try {
     await api(`/api/eq/profiles/${p.id}`, 'DELETE');

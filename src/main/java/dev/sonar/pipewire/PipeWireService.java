@@ -1,5 +1,7 @@
 package dev.sonar.pipewire;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.ProcessBuilder.Redirect;
@@ -17,6 +19,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import javax.sound.sampled.AudioFileFormat;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -117,6 +124,27 @@ public class PipeWireService {
 				.filter(l -> l.split("\t").length > 1 && l.split("\t")[1].equals(index)).count();
 	}
 
+	/** Record `seconds` of a mono source as a 48 kHz 16-bit WAV (shorter if the source stops). */
+	public byte[] recordWav(String source, int seconds) {
+		try {
+			Process p = new ProcessBuilder("parec", "-d", source, "--raw", "--format=s16le", "--rate=48000", "--channels=1",
+					"--latency-msec=20").redirectError(Redirect.DISCARD).start();
+			p.onExit().orTimeout(seconds + 3, TimeUnit.SECONDS).exceptionally(e -> { // a source that never delivers
+				p.destroy();
+				return p;
+			});
+			byte[] pcm = p.getInputStream().readNBytes(seconds * 48000 * 2);
+			p.destroy();
+			AudioFormat format = new AudioFormat(48000, 16, 1, true, false);
+			ByteArrayOutputStream wav = new ByteArrayOutputStream();
+			AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(pcm), format, pcm.length / 2),
+					AudioFileFormat.Type.WAVE, wav);
+			return wav.toByteArray();
+		} catch (IOException e) {
+			throw new UncheckedIOException("Can't record " + source, e);
+		}
+	}
+
 	public void unloadModule(long id) {
 		run("pactl", "unload-module", Long.toString(id));
 	}
@@ -167,7 +195,7 @@ public class PipeWireService {
 	/**
 	 * (Re)start the EQ for channel node `name`, routed to/from `device`.
 	 * denoise: put rnnoise in front of the EQ (mic only); skipped when the plugin isn't installed.
-	 * volume: linear gain after the EQ (null: none, the mic's volume is its source's).
+	 * volume: linear gain after the EQ (null: none).
 	 * stream: also feed the channel, without EQ or volume, into {@link #STREAM_SINK} at this linear gain (null: don't).
 	 * spatial: virtual 7.1 surround after the EQ (the channel's sink must be 7.1); skipped when unavailable.
 	 */

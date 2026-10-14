@@ -3,6 +3,7 @@ package dev.sonar.service;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -16,6 +17,7 @@ import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,6 +30,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -62,6 +65,9 @@ class MixerServiceTest {
 	private Preferences prefs;
 
 	private MixerService service;
+
+	/** The Arctis Nova Pro Wireless base station's PipeWire device, recognised by name in outputKey. */
+	private static final String ARCTIS_DEVICE = "alsa_output.usb-SteelSeries_Arctis_Nova_Pro_Wireless-00.analog-stereo";
 
 	@BeforeEach
 	void setUp() {
@@ -318,6 +324,56 @@ class MixerServiceTest {
 	}
 
 	@Test
+	void setPreampOnOutputAppliesGainAndSaves() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		c.setVolume(100);
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		Channel saved = service.setPreamp(1L, -6);
+
+		ArgumentCaptor<Double> gain = ArgumentCaptor.forClass(Double.class);
+		verify(pw).setGain(eq("sonar_game_eq_in"), gain.capture());
+		assertEquals(Math.pow(10, -6 / 20.0), gain.getValue(), 1e-9);
+		assertEquals(-6, saved.getPreamp(), 1e-9);
+	}
+
+	@Test
+	void setPreampClampsBelowMin() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		when(channels.findById(1L)).thenReturn(Optional.of(c));
+
+		Channel saved = service.setPreamp(1L, -100);
+
+		assertEquals(-24, saved.getPreamp(), 1e-9);
+	}
+
+	@Test
+	void setPreampOnMicAppliesPreampGain() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		when(channels.findById(1L)).thenReturn(Optional.of(mic));
+
+		service.setPreamp(1L, -6);
+
+		ArgumentCaptor<Double> gain = ArgumentCaptor.forClass(Double.class);
+		verify(pw).setGain(eq("sonar_mic_eq_in"), gain.capture());
+		assertEquals(Math.pow(10, -6 / 20.0), gain.getValue(), 1e-9);
+	}
+
+	@Test
+	void saveProfileClampsPreamp() {
+		when(profiles.findByName("Mine")).thenReturn(Optional.empty());
+		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
+
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(), new double[3], -40, false);
+
+		assertEquals(-24, p.getPreamp(), 1e-9);
+	}
+
+	@Test
 	void setEqAppliesParamsForSameTypesButRestartsForChangedType() {
 		Channel c = channel(1L);
 		c.setSinkName("sonar_game");
@@ -345,7 +401,7 @@ class MixerServiceTest {
 		when(profiles.findByName("Mine")).thenReturn(Optional.empty());
 		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
 
-		EqProfile p = service.saveProfile("Mine", EqBand.graphic(), new double[] { 20, -3, 0 });
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(), new double[] { 20, -3, 0 }, 0, false);
 
 		assertEquals("Mine", p.getName());
 		assertEquals(false, p.isBuiltIn());
@@ -357,7 +413,7 @@ class MixerServiceTest {
 		when(profiles.findByName("Flat"))
 				.thenReturn(Optional.of(new EqProfile("Flat", EqBand.graphic(), true)));
 
-		assertThrows(IllegalArgumentException.class, () -> service.saveProfile("Flat", EqBand.graphic(), new double[3]));
+		assertThrows(IllegalArgumentException.class, () -> service.saveProfile("Flat", EqBand.graphic(), new double[3], 0, false));
 	}
 
 	@Test
@@ -366,7 +422,41 @@ class MixerServiceTest {
 		when(profiles.findByName("Mine")).thenReturn(Optional.of(existing));
 		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
 
-		EqProfile p = service.saveProfile("Mine", EqBand.graphic(3.0), new double[3]);
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(3.0), new double[3], 0, false);
+
+		assertEquals(3.0, p.getBands().get(0).gain());
+	}
+
+	@Test
+	void saveProfileCreatesMicProfile() {
+		when(profiles.findByName("Mine")).thenReturn(Optional.empty());
+		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
+
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(), new double[3], 0, true);
+
+		assertEquals(EqProfile.MIC, p.getKind());
+	}
+
+	@Test
+	void saveProfileRejectsCrossKindOverwrite() {
+		EqProfile existing = new EqProfile("Mine", EqBand.graphic(), false);
+		existing.setKind(EqProfile.OUTPUT);
+		when(profiles.findByName("Mine")).thenReturn(Optional.of(existing));
+
+		assertThrows(IllegalArgumentException.class,
+				() -> service.saveProfile("Mine", EqBand.graphic(), new double[3], 0, true));
+
+		verify(profiles, never()).save(any());
+	}
+
+	@Test
+	void saveProfileOverwritesMicProfile() {
+		EqProfile existing = new EqProfile("Mine", EqBand.graphic(), false);
+		existing.setKind(EqProfile.MIC);
+		when(profiles.findByName("Mine")).thenReturn(Optional.of(existing));
+		when(profiles.save(any(EqProfile.class))).thenAnswer(i -> i.getArgument(0));
+
+		EqProfile p = service.saveProfile("Mine", EqBand.graphic(3.0), new double[3], 0, true);
 
 		assertEquals(3.0, p.getBands().get(0).gain());
 	}
@@ -483,6 +573,84 @@ class MixerServiceTest {
 		service.setDevice(1L, "alsa_in");
 
 		verify(pw).startEq(eq("sonar_mic"), eq("Mic"), eq("alsa_in"), any(), eq(true), eq(false), nullable(Double.class), nullable(Double.class), eq(false));
+	}
+
+	// Headset output switching (outputKey / followOutput / setHeadsetConnected)
+
+	@Test
+	void outputKeyNonArctisIgnoresHeadsetState() {
+		Channel c = channel(1L);
+		c.setDeviceName("alsa_output.pci-x");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(c));
+
+		assertEquals("alsa_output.pci-x", service.outputKey(c));
+		service.setHeadsetConnected(false);
+		assertEquals("alsa_output.pci-x", service.outputKey(c));
+		service.setHeadsetConnected(true);
+		assertEquals("alsa_output.pci-x", service.outputKey(c));
+	}
+
+	@Test
+	void outputKeyArctisDependsOnHeadsetState() {
+		Channel c = channel(1L);
+		c.setDeviceName(ARCTIS_DEVICE);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(c));
+
+		assertNull(service.outputKey(c));
+		service.setHeadsetConnected(true);
+		assertEquals(ARCTIS_DEVICE, service.outputKey(c));
+		service.setHeadsetConnected(false);
+		assertEquals(ARCTIS_DEVICE + "#speakers", service.outputKey(c));
+	}
+
+	@Test
+	void headsetRoundTripSwapsEqBetweenHeadsetAndSpeakers() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_game");
+		c.setName("Game");
+		c.setDeviceName(ARCTIS_DEVICE);
+		List<EqBand> initial = List.of(new EqBand("peaking", 500, 2, 1.41));
+		c.setEq(initial);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(c));
+
+		service.setHeadsetConnected(true);
+		assertEquals(ARCTIS_DEVICE, c.getEqOutput());
+		assertEquals(initial, c.getEq());
+
+		List<EqBand> a = List.of(new EqBand("peaking", 1000, 3, 1.41));
+		c.setEq(a);
+		service.setHeadsetConnected(false);
+		assertEquals(a, c.getEq());
+		assertEquals(ARCTIS_DEVICE + "#speakers", c.getEqOutput());
+		assertEquals(a, c.getEqByOutput().get(ARCTIS_DEVICE).bands());
+
+		List<EqBand> b = List.of(new EqBand("peaking", 2000, -4, 1.41));
+		c.setEq(b);
+		service.setHeadsetConnected(true);
+		assertEquals(a, c.getEq());
+		assertEquals(b, c.getEqByOutput().get(ARCTIS_DEVICE + "#speakers").bands());
+		verify(pw).startEq(eq("sonar_game"), eq("Game"), eq(ARCTIS_DEVICE), any(), eq(false), eq(false),
+				nullable(Double.class), nullable(Double.class), eq(false));
+	}
+
+	@Test
+	void setHeadsetConnectedIgnoresMicChannel() {
+		Channel mic = channel(1L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		mic.setDeviceName(ARCTIS_DEVICE);
+		List<EqBand> eq = List.of(new EqBand("peaking", 1000, 3, 1.41));
+		mic.setEq(eq);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+
+		service.setHeadsetConnected(true);
+		service.setHeadsetConnected(false);
+
+		assertEquals(eq, mic.getEq());
+		assertNull(mic.getEqOutput());
+		assertTrue(mic.getEqByOutput().isEmpty());
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(), nullable(Double.class), nullable(Double.class), anyBoolean());
+		verify(channels, never()).save(mic);
 	}
 
 	@Test
@@ -921,5 +1089,50 @@ class MixerServiceTest {
 	@Test
 	void createChannelRejectsStreamSinkName() {
 		assertThrows(IllegalArgumentException.class, () -> service.createChannel("Stream", false));
+	}
+
+	@Test
+	void recordMicTestStartsEqAndReturnsRecordingWhenEqNotRunning() {
+		Channel mic = channel(1L);
+		mic.setSinkName("sonar_mic");
+		mic.setName("Mic");
+		mic.setMic(true);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+		when(pw.isEqRunning("sonar_mic")).thenReturn(false);
+		when(pw.recordWav("sonar_mic", 5)).thenReturn(new byte[] { 1, 2, 3, 4 });
+
+		byte[] recording = service.recordMicTest(5);
+
+		assertArrayEquals(new byte[] { 1, 2, 3, 4 }, recording);
+		verify(pw, times(1)).startEq(eq("sonar_mic"), any(), any(), any(), anyBoolean(), anyBoolean(),
+				nullable(Double.class), nullable(Double.class), anyBoolean());
+	}
+
+	@Test
+	void recordMicTestDoesNotStartEqWhenAlreadyRunning() {
+		Channel mic = channel(1L);
+		mic.setSinkName("sonar_mic");
+		mic.setName("Mic");
+		mic.setMic(true);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(mic));
+		when(pw.isEqRunning("sonar_mic")).thenReturn(true);
+		when(pw.recordWav("sonar_mic", 5)).thenReturn(new byte[] { 1, 2, 3, 4 });
+
+		service.recordMicTest(5);
+
+		verify(pw, never()).startEq(any(), any(), any(), any(), anyBoolean(), anyBoolean(),
+				nullable(Double.class), nullable(Double.class), anyBoolean());
+		verify(pw).recordWav("sonar_mic", 5);
+	}
+
+	@Test
+	void recordMicTestWithoutMicChannelThrows() {
+		Channel out = channel(2L);
+		out.setName("Game");
+		out.setSinkName("sonar_game");
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(out));
+
+		assertThrows(IllegalArgumentException.class, () -> service.recordMicTest(5));
+		verify(pw, never()).recordWav(anyString(), anyInt());
 	}
 }

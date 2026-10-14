@@ -66,14 +66,15 @@ public class MixerController {
 	}
 
 	public record ChannelView(long id, String name, String sinkName, int volume, boolean muted, int streamVolume, boolean streamMuted,
-			String deviceName, String deviceDescription, int position, boolean active, boolean mic, List<EqBand> eq, double[] tone,
+			String deviceName, String deviceDescription, int position, boolean active, boolean mic, List<EqBand> eq, double[] tone, double preamp, String eqOutput,
 			boolean noiseSuppression, boolean spatial, boolean deletable) {
 	}
 
 	public record EqView(double maxGain, List<EqProfile> profiles) {
 	}
 
-	public record EqBody(String name, List<EqBand> bands, double[] tone) {
+	/** preamp null (older clients) = 0 dB; mic: save into the mic's profile list (null = outputs'). */
+	public record EqBody(String name, List<EqBand> bands, double[] tone, Double preamp, Boolean mic) {
 	}
 
 	public record ToneBody(double[] tone) {
@@ -96,7 +97,7 @@ public class MixerController {
 		return mixer.listChannels().stream().map(c -> new ChannelView(
 				c.getId(), c.getName(), c.getSinkName(), c.getVolume(), c.isMuted(), c.getStreamVolume(), c.isStreamMuted(),
 				c.getDeviceName(), desc.getOrDefault(c.getDeviceName(), c.getDeviceName()),
-				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(), c.getTone(),
+				c.getPosition(), live.contains(c.getSinkName()), c.isMic(), c.getEq(), c.getTone(), c.getPreamp(), c.getEqOutput(),
 				c.isNoiseSuppression(), c.isSpatial(), mixer.isDeletable(c))).toList();
 	}
 
@@ -168,6 +169,12 @@ public class MixerController {
 		mixer.setEq(id, body.bands());
 	}
 
+	/** Body: {preamp} in dB. */
+	@PostMapping("/channels/{id}/preamp")
+	public void preamp(@PathVariable long id, @RequestBody Map<String, Double> body) {
+		mixer.setPreamp(id, required(body, "preamp"));
+	}
+
 	@PostMapping("/channels/{id}/tone")
 	public void tone(@PathVariable long id, @RequestBody ToneBody body) {
 		mixer.setTone(id, body.tone());
@@ -181,7 +188,8 @@ public class MixerController {
 	/** Create a custom profile, or overwrite the custom one with that name. */
 	@PostMapping("/eq/profiles")
 	public EqProfile saveProfile(@RequestBody EqBody body) {
-		return mixer.saveProfile(body.name(), body.bands(), body.tone());
+		return mixer.saveProfile(body.name(), body.bands(), body.tone(), body.preamp() == null ? 0 : body.preamp(),
+				Boolean.TRUE.equals(body.mic()));
 	}
 
 	@DeleteMapping("/eq/profiles/{id}")
@@ -211,6 +219,12 @@ public class MixerController {
 	@PostMapping("/streamer")
 	public void streamer(@RequestBody Map<String, Boolean> body) {
 		mixer.setStreamerMode(required(body, "enabled"));
+	}
+
+	/** Mic test: records 5 s of the virtual mic (the request takes that long) and returns it as WAV. */
+	@PostMapping(value = "/mic/test", produces = "audio/wav")
+	public byte[] micTest() {
+		return mixer.recordMicTest(5);
 	}
 
 	/** Body: {mix: -100 (all Game) .. 100 (all Chat)}. */
