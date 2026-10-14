@@ -131,6 +131,9 @@ in Sonar's Preferences on KDE),
 and the icon. It builds `target/sonar.jar` first if needed, and fills in the repo's location, so
 re-run it after moving the repo. The files it installs are templates in `install/`.
 
+Updating: `install/update.sh` pulls, rebuilds (tests included) and restarts the backend; if the build
+fails, the previous version keeps running. `--force` rebuilds without anything new to pull.
+
 Deploying a change: `systemctl --user stop sonar && ./mvnw package && systemctl --user start sonar`
 (stop first: replacing the jar under a running JVM breaks its shutdown cleanup).
 
