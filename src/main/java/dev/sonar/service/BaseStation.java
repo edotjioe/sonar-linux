@@ -22,6 +22,8 @@ import jakarta.annotation.PreDestroy;
  *   github.com/Dymstro/nova-chatmix-linux.
  * - Headset status (battery, spare battery, connection, mic mute): polled every 10 s. Layout as in
  *   github.com/Sapd/HeadsetControl, mute byte found by probing.
+ * - Volume knob: reported as 07 25 <0 (loudest)..56>; it becomes Sonar's master volume (the base applies it to the
+ *   headset itself, not to the speakers on its line out).
  * - Mic mute: the base reports the headset's mute button as it's pressed; we mirror it onto the
  *   Mic channel, so Sonar shows it (the headset mutes the mic itself).
  * Needs udev/70-steelseries-arctis.rules installed; without it (or the headset) this idles.
@@ -38,6 +40,7 @@ public class BaseStation {
 
 	private static final byte TX = 0x06, RX = 0x07;
 	private static final byte CHATMIX_ENABLE = 0x49, CHATMIX = 0x45;
+	private static final byte VOLUME = 0x25, VOLUME_MAX = 56; // the knob: 0 = loudest .. 56 = quietest
 	private static final byte STATUS = (byte) 0xb0, MIC_MUTE = (byte) 0xbb;
 	private static final long STATUS_EVERY_MS = 3_000; // also how soon a channel's EQ follows the headset on/off
 
@@ -129,6 +132,8 @@ public class BaseStation {
 								mixer.setChatMix(mix);
 								last = mix;
 							}
+						} else if (buf[0] == RX && buf[1] == VOLUME) {
+							mixer.setMasterVolume(Math.round((VOLUME_MAX - (buf[2] & 0xff)) * 100f / VOLUME_MAX));
 						} else if (buf[0] == RX && buf[1] == MIC_MUTE) {
 							micMuted(buf[2] != 0);
 						} else if (buf[0] == TX && buf[1] == STATUS) {

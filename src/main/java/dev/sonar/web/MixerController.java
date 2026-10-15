@@ -212,6 +212,7 @@ public class MixerController {
 		body.setId(1L);
 		body.setChatMix(preferences.get().getChatMix()); // owned by /chatmix, which also applies it
 		body.setStreamerMode(preferences.get().isStreamerMode()); // owned by /streamer, likewise
+		body.setMasterVolume(preferences.get().getMasterVolume()); // owned by /master, likewise
 		return preferences.save(body);
 	}
 
@@ -231,6 +232,12 @@ public class MixerController {
 	@PostMapping("/chatmix")
 	public void chatMix(@RequestBody Map<String, Integer> body) {
 		mixer.setChatMix(required(body, "mix"));
+	}
+
+	/** Body: {volume: 0..100}. */
+	@PostMapping("/master")
+	public void master(@RequestBody Map<String, Integer> body) {
+		mixer.setMasterVolume(required(body, "volume"));
 	}
 
 	@GetMapping("/apps")

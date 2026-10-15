@@ -258,6 +258,8 @@ public class MixerService {
 			}
 			if (followOutput(c)) {
 				restartEq(c);
+			} else {
+				pw.setGain(c.getSinkName() + "_eq_in", gain(c)); // the master volume moves between knob and Sonar
 			}
 			if (!Objects.equals(before, c.getEqOutput())) {
 				channels.save(c); // also a first visit: the previous output's EQ was just stored
@@ -352,9 +354,23 @@ public class MixerService {
 		}
 	}
 
+	/** Set the master volume (0..100) and re-apply every output channel's gain. */
+	public synchronized void setMasterVolume(int volume) {
+		Preferences p = preferences.get();
+		p.setMasterVolume(Math.max(0, Math.min(100, volume)));
+		preferences.save(p);
+		listChannels().stream().filter(c -> !c.isMic()).forEach(c -> pw.setGain(c.getSinkName() + "_eq_in", gain(c)));
+	}
+
+	/** On the Arctis headset the base station applies its volume knob itself, so the master volume mustn't. */
+	boolean masterInHardware(Channel c) {
+		String key = outputKey(c);
+		return key != null && key.contains("Arctis_Nova_Pro") && !key.endsWith("#speakers");
+	}
+
 	/**
 	 * The gain at the end of a channel's EQ chain: its preamp, and for an output channel its volume, scaled down by
-	 * ChatMix for Game/Chat, 0 when muted. Volume is cubed like pactl's %, so the slider feels the same. An output's
+	 * ChatMix for Game/Chat and by the master volume, 0 when muted. Volume is cubed like pactl's %, so the slider feels the same. An output's
 	 * sink itself stays at 100%: its monitor feeds the stream mix. The mic's volume and mute stay on its source.
 	 */
 	private double gain(Channel c) {
@@ -362,7 +378,11 @@ public class MixerService {
 		if (c.isMic()) {
 			return preamp;
 		}
-		return c.isMuted() ? 0 : preamp * cube(mixed(c.getVolume(), c.getSinkName(), preferences.get().getChatMix()));
+		if (c.isMuted()) {
+			return 0;
+		}
+		double master = masterInHardware(c) ? 1 : cube(preferences.get().getMasterVolume());
+		return preamp * master * cube(mixed(c.getVolume(), c.getSinkName(), preferences.get().getChatMix()));
 	}
 
 	/** The channel's gain into the stream mix (ChatMix only affects what you hear). */

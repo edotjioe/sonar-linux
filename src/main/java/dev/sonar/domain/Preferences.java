@@ -21,6 +21,10 @@ public class Preferences {
 	@Column(columnDefinition = "integer default 0")
 	private int chatMix = 0;
 
+	/** Master volume 0..100 over every output channel (not the stream mix); the base station's knob sets it too. */
+	@Column(columnDefinition = "integer default 100")
+	private int masterVolume = 100;
+
 	/** Show level meters (they record every channel, mic included, while the UI is open). */
 	private boolean meters = true;
 
@@ -58,6 +62,14 @@ public class Preferences {
 
 	public void setChatMix(int chatMix) {
 		this.chatMix = chatMix;
+	}
+
+	public int getMasterVolume() {
+		return masterVolume;
+	}
+
+	public void setMasterVolume(int masterVolume) {
+		this.masterVolume = masterVolume;
 	}
 
 	public boolean isMeters() {

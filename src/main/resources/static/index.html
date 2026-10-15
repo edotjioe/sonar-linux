@@ -13,6 +13,11 @@
   <h1>Sonar <small id="version" class="version"></small><small id="headset" class="version" hidden title="Headset batteries: Arctis (and the spare in its base station), Bluetooth headphones"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="loadHotkey().catch(() => {}); $('prefs').showModal()">⚙</button></span></h1>
   <div class="sub">PipeWire mixer — assign apps to channels, set volume, choose output.</div>
 
+  <div class="chatmix" id="master" title="Every channel's volume (not the stream mix); the base station's knob turns it too">
+    <b>Master</b>
+    <input type="range" id="masterSlider" min="0" max="100" step="1" value="100" oninput="masterChanged()" />
+    <span class="side" id="masterVal">100%</span>
+  </div>
   <div class="chatmix" id="chatmix" hidden title="Double-click to centre">
     <b>ChatMix</b>
     <span class="side" id="cmGame"></span>
@@ -194,12 +199,25 @@ function chatMixChanged() {
   cmTimer = setTimeout(() => api('/api/chatmix', 'POST', { mix: +$('cmSlider').value }).catch(alert), 60);
 }
 
-// follow the hardware dial on the base station (it changes chatMix server-side)
+// --- Master volume: 0..100 over every output channel; the base station's knob sets it too ---
+let masterTimer;
+function masterChanged() {
+  cmTouched = Date.now();
+  $('masterVal').textContent = $('masterSlider').value + '%';
+  clearTimeout(masterTimer);
+  masterTimer = setTimeout(() => api('/api/master', 'POST', { volume: +$('masterSlider').value }).catch(alert), 60);
+}
+
+// follow the hardware dial and knob on the base station (they change chatMix/masterVolume server-side)
 async function syncChatMix() {
-  const { chatMix } = await (await fetch('/api/preferences')).json();
+  const { chatMix, masterVolume } = await (await fetch('/api/preferences')).json();
   if (Date.now() - cmTouched > 1500 && +$('cmSlider').value !== chatMix) {
     $('cmSlider').value = chatMix;
     renderChatMix();
+  }
+  if (Date.now() - cmTouched > 1500 && +$('masterSlider').value !== masterVolume) {
+    $('masterSlider').value = masterVolume;
+    $('masterVal').textContent = masterVolume + '%';
   }
 }
 
@@ -256,7 +274,7 @@ function renderChannels() {
       <button class="eqbtn" onclick="openEq(${c.id})" title="${c.mic ? '' : 'EQ for ' + esc(eqOutputName(c)) + ': each output keeps its own'}">EQ: ${esc(profileName(c))}</button>
       ${c.mic ? `<label class="nsbtn" title="Remove background noise (keyboard, fans) with rnnoise"><input type="checkbox" ${c.noiseSuppression ? 'checked' : ''} onchange="setNoise(${c.id}, this.checked)" /> Noise suppression</label>`
         : `<label class="nsbtn" title="Virtual 7.1 surround for headphones. Restart a game after switching: games pick stereo or surround when they start"><input type="checkbox" ${c.spatial ? 'checked' : ''} onchange="setSpatial(${c.id}, this.checked)" /> Spatial audio</label>`}
-      <div class="devlabel">${c.active ? '<span class="live-dot">●</span> live' : '○ offline'} — ${esc(c.sinkName)}</div>
+      <div class="devlabel status">${c.active ? '<span class="live-dot">●</span> live' : '○ offline'} — ${esc(c.sinkName)}</div>
     </div>`).join('');
 }
 
@@ -270,6 +288,8 @@ async function loadPrefs() {
   document.documentElement.classList.toggle('no-meters', !prefs.meters);
   $('cmSlider').value = prefs.chatMix;
   renderChatMix();
+  $('masterSlider').value = prefs.masterVolume;
+  $('masterVal').textContent = prefs.masterVolume + '%';
 }
 
 // The overlay hotkey lives in KDE's global shortcuts; Sonar changes it there (null key = not KDE)
@@ -339,6 +359,8 @@ async function loadHeadset() {
       + (h.spareBattery == null ? '' : ` · spare ${h.spareBattery}%`));
   }
   bt.forEach(b => parts.push(`🎧 ${b.name} ${b.percent}%`));
+  // with the headset on, the base applies its knob itself (MixerService.masterInHardware): the slider only follows it
+  $('masterSlider').disabled = h.connected;
   $('headset').hidden = !parts.length;
   $('headset').textContent = parts.join('  ');
 }
@@ -798,7 +820,7 @@ if (document.documentElement.classList.contains('overlay')) {
   setInterval(loadApps, 2000);
   loadHeadset().catch(() => {});
   setInterval(() => loadHeadset().catch(() => {}), 10000);
-  setInterval(() => $('chatmix').hidden || syncChatMix().catch(() => {}), 1000);
+  setInterval(() => syncChatMix().catch(() => {}), 1000);
   // don't re-render under the user while they drag EQ sliders
   setInterval(() => $('eq').open || loadChannels(), 5000);
   setInterval(() => prefs.meters && loadLevels().catch(() => {}), 100);

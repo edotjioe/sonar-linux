@@ -581,6 +581,7 @@ class MixerServiceTest {
 	void outputKeyNonArctisIgnoresHeadsetState() {
 		Channel c = channel(1L);
 		c.setDeviceName("alsa_output.pci-x");
+		c.setSinkName("sonar_media");
 		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(c));
 
 		assertEquals("alsa_output.pci-x", service.outputKey(c));
@@ -594,6 +595,7 @@ class MixerServiceTest {
 	void outputKeyArctisDependsOnHeadsetState() {
 		Channel c = channel(1L);
 		c.setDeviceName(ARCTIS_DEVICE);
+		c.setSinkName("sonar_media");
 		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(c));
 
 		assertNull(service.outputKey(c));
@@ -1134,5 +1136,55 @@ class MixerServiceTest {
 
 		assertThrows(IllegalArgumentException.class, () -> service.recordMicTest(5));
 		verify(pw, never()).recordWav(anyString(), anyInt());
+	}
+
+	// Master volume (setMasterVolume / masterInHardware)
+
+	@Test
+	void setMasterVolumeClamps() {
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of());
+
+		service.setMasterVolume(150);
+		assertEquals(100, prefs.getMasterVolume());
+		verify(preferences).save(prefs);
+
+		service.setMasterVolume(-5);
+		assertEquals(0, prefs.getMasterVolume());
+	}
+
+	@Test
+	void setMasterVolumeScalesOutputChannelsNotMic() {
+		Channel out = channel(1L);
+		out.setSinkName("sonar_media");
+		out.setDeviceName("alsa_output.pci-x");
+		out.setVolume(80);
+		Channel mic = channel(2L);
+		mic.setMic(true);
+		mic.setSinkName("sonar_mic");
+		mic.setVolume(100);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(out, mic));
+
+		service.setMasterVolume(50);
+
+		verify(pw).setGain("sonar_media_eq_in", cube(50) * cube(80));
+		verify(pw, never()).setGain(eq("sonar_mic_eq_in"), anyDouble());
+	}
+
+	@Test
+	void masterNotAppliedOnArctisHeadsetButOnSpeakers() {
+		Channel c = channel(1L);
+		c.setSinkName("sonar_media");
+		c.setDeviceName(ARCTIS_DEVICE);
+		c.setVolume(80);
+		when(channels.findAllByOrderByPositionAsc()).thenReturn(List.of(c));
+
+		service.setHeadsetConnected(true);
+		reset(pw);
+
+		service.setMasterVolume(50);
+		verify(pw).setGain("sonar_media_eq_in", cube(80));
+
+		service.setHeadsetConnected(false);
+		verify(pw).setGain("sonar_media_eq_in", cube(50) * cube(80));
 	}
 }

@@ -63,7 +63,7 @@ dialog footer { display: flex; justify-content: flex-end; }
   --ch: var(--accent);
   background: var(--panel); border: 1px solid var(--line);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 16px 100%, 0 calc(100% - 16px));
-  padding: 16px;
+  padding: 16px; display: flex; flex-direction: column;
 }
 .card header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .card h2 { font-family: var(--font-display); text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
@@ -85,6 +85,7 @@ select, input[type=text], textarea { background: var(--panel2); color: var(--tex
 select { width: 100%; }
 option { background: var(--panel2); color: var(--text); }
 .devlabel { color: var(--faint); font-family: var(--font-mono); font-size: 11px; margin-top: 10px; }
+.card .status { margin-top: auto; padding-top: 10px; } /* pinned to the bottom: cards in a row share one height */
 .section { margin-top: 28px; }
 .section h2 { font-family: var(--font-display); font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
   font-weight: 600; color: var(--dim); margin: 0 0 10px; display: flex; align-items: center; gap: 10px; }
