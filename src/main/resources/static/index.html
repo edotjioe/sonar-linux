@@ -10,7 +10,7 @@
 <body>
 <div class="sweep" aria-hidden="true"></div>
 <main>
-  <h1>Sonar <small id="version" class="version"></small><small id="headset" class="version" hidden title="Headset batteries: Arctis (and the spare in its base station), Bluetooth headphones"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="loadHotkey().catch(() => {}); $('prefs').showModal()">⚙</button></span></h1>
+  <h1>Sonar <small id="version" class="version"></small><small id="headset" class="version" hidden title="Headset batteries: Arctis (and the spare in its base station), Bluetooth headphones"></small><span><button title="OBS recording" onclick="openObs()">OBS</button> <button title="Preferences" onclick="loadHotkey().catch(() => {}); loadAutoUpdate().catch(() => {}); $('prefs').showModal()">⚙</button></span></h1>
   <div class="sub">PipeWire mixer — assign apps to channels, set volume, choose output.</div>
 
   <div class="chatmix" id="master" title="Every channel's volume (not the stream mix); the base station's knob turns it too">
@@ -58,6 +58,12 @@
     <label><input type="checkbox" name="streamerMode" /> Streamer mode</label>
     <div class="hint">Adds a "Sonar Stream" output with its own volume per channel (📡), without EQ, ChatMix or your mutes.
       In OBS, capture it with an Audio Output Capture. Switching restarts the channels' audio for a moment.</div>
+  </fieldset>
+  <fieldset>
+    <legend>Updates</legend>
+    <label><input type="checkbox" name="autoUpdate" /> Auto-update</label>
+    <div class="hint">Pulls and rebuilds Sonar when switched on, 2 minutes after login and then daily (install/update.sh). An update restarts
+      the audio for a moment.</div>
   </fieldset>
   <fieldset>
     <legend>Display</legend>
@@ -315,6 +321,18 @@ async function captureHotkey(e) {
     hint.textContent = err.message;
   }
   loadHotkey();
+}
+
+// Auto-update is the sonar-update.timer user unit, not a stored preference
+async function loadAutoUpdate() {
+  $('prefs').querySelector('[name=autoUpdate]').checked = (await (await fetch('/api/auto-update')).json()).enabled;
+}
+async function setAutoUpdate(enabled) {
+  try {
+    await api('/api/auto-update', 'PUT', { enabled });
+  } finally {
+    await loadAutoUpdate();
+  }
 }
 
 async function savePrefs() {
@@ -805,7 +823,8 @@ document.querySelectorAll('dialog').forEach(d => {
   });
 });
 
-$('prefs').addEventListener('change', e => (e.target.name === 'streamerMode' ? setStreamer(e.target.checked) : savePrefs()).catch(alert));
+$('prefs').addEventListener('change', e => (e.target.name === 'streamerMode' ? setStreamer(e.target.checked)
+  : e.target.name === 'autoUpdate' ? setAutoUpdate(e.target.checked) : savePrefs()).catch(alert));
 if (document.documentElement.classList.contains('overlay')) {
   try { if (localStorage.getItem('obsSide')) showObsSide(true); } catch (e) {}
 }

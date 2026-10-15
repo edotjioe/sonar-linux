@@ -133,6 +133,8 @@ re-run it after moving the repo. The files it installs are templates in `install
 
 Updating: `install/update.sh` pulls, rebuilds (tests included) and restarts the backend; if the build
 fails, the previous version keeps running. `--force` rebuilds without anything new to pull.
+**Auto-update** (Preferences, off by default) runs it from a systemd user timer: when switched on, 2 minutes after login,
+then daily. It only restarts Sonar when there's something new to pull.
 
 Deploying a change: `systemctl --user stop sonar && ./mvnw package && systemctl --user start sonar`
 (stop first: replacing the jar under a running JVM breaks its shutdown cleanup).
@@ -199,7 +201,13 @@ src/main/resources/
 | POST | `/api/route` | `{binary, displayName, channelId}` (channelId null = unassign) |
 | GET | `/api/devices` | physical output devices |
 | GET | `/api/sources` | physical mics |
-| GET/PUT | `/api/preferences` | `{hotkeyOpens, autoRoute, meters, chatMix}` (PUT ignores `chatMix`) |
+| GET/PUT | `/api/preferences` | `{hotkeyOpens, autoRoute, meters, chatMix, masterVolume}` (PUT ignores `chatMix`, `masterVolume`) |
+| POST | `/api/master` | `{volume: 0..100}`: master volume (the base station's knob sets it too) |
+| GET/PUT | `/api/auto-update` | `{enabled}`: the sonar-update.timer |
 
 Bad input (unknown channel, duplicate or empty name, missing field, OBS refusing a request) returns
 **400** with the reason as the body; OBS not running returns **503**.
+
+## License
+
+MIT: see [LICENSE](LICENSE). Copy it, change it, build your own on it; keep the copyright notice.

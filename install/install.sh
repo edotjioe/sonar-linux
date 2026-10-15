@@ -18,6 +18,9 @@ export JAVA_HOME=${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$JAVA")")")} 
 mkdir -p "$UNITS" "$APPS" "$HOME/.local/share/icons/hicolor/256x256/apps"
 # the templates say @REPO@ wherever the repo's path goes
 sed -e "s#@REPO@#$REPO#g" -e "s#@JAVA@#$JAVA#g" "$REPO/install/sonar.service" > "$UNITS/sonar.service"
+# auto-update: installed but left as it was (off until switched on in Sonar's Preferences)
+sed "s#@REPO@#$REPO#g" "$REPO/install/sonar-update.service" > "$UNITS/sonar-update.service"
+cp "$REPO/install/sonar-update.timer" "$UNITS/sonar-update.timer"
 for f in dev.sonar.desktop dev.sonar.overlay.desktop; do
 	sed "s#@REPO@#$REPO#g" "$REPO/install/$f" > "$APPS/$f"
 done
