@@ -2,6 +2,7 @@
 # Sonar windows (WebKitGTK, no browser chrome). One running instance serves both:
 #   sonar-window.py           -> the normal mixer window
 #   sonar-window.py --toggle  -> show/hide the full-screen overlay (bound to a global hotkey)
+#   sonar-window.py --tray    -> just the tray icon (autostarted at login)
 # The mixer's OBS button (window.open) opens the OBS page in its own window.
 import json
 import os
@@ -18,6 +19,14 @@ try:
     from gi.repository import GtkLayerShell
 except (ValueError, ImportError):
     GtkLayerShell = None  # not installed (e.g. stock Bazzite): the overlay falls back to a plain fullscreen window
+AppIndicator = None  # tray icon (StatusNotifierItem): Ayatana or the older libappindicator, whichever is installed
+for name in ('AyatanaAppIndicator3', 'AppIndicator3'):
+    try:
+        gi.require_version(name, '0.1')
+        AppIndicator = __import__('gi.repository.' + name, fromlist=[name])
+        break
+    except (ValueError, ImportError):
+        pass
 
 URL = 'http://localhost:8080/'
 OVERLAY_URL = URL + '?overlay=1'
@@ -61,11 +70,29 @@ class Sonar(Gtk.Application):
         self.layer_shell = False  # the overlay is a layer-shell surface (its keyboard mode can change)
         self.started_mtime = script_mtime()  # this file as loaded; see restart_if_updated
 
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        if not AppIndicator:
+            return
+        self.hold()  # the tray icon keeps this process alive with no window open
+        menu = Gtk.Menu()
+        for label, action in (('Open Sonar', self.show_main), ('Overlay', self.toggle_overlay), ('Quit', self.quit)):
+            item = Gtk.MenuItem(label=label)
+            item.connect('activate', lambda _item, act=action: act())
+            menu.append(item)
+        menu.show_all()
+        self.tray = AppIndicator.Indicator.new('dev.sonar', 'sonar', AppIndicator.IndicatorCategory.APPLICATION_STATUS)
+        self.tray.set_title('Sonar')
+        self.tray.set_menu(menu)
+        self.tray.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+
     def do_command_line(self, cmdline):
         # a second launch doesn't start a new process: its arguments arrive here, in the running one
         if self.restart_if_updated(cmdline.get_arguments()[1:]):
             return 0
-        if '--toggle' in cmdline.get_arguments()[1:]:
+        if '--tray' in cmdline.get_arguments()[1:]:
+            pass  # do_startup already put up the tray icon
+        elif '--toggle' in cmdline.get_arguments()[1:]:
             if hotkey_opens() == 'window':
                 self.toggle_main()
             else:
@@ -201,7 +228,8 @@ class Sonar(Gtk.Application):
         return view
 
 
-GLib.set_prgname('sonar')
+# Wayland app_id = prgname; it must match dev.sonar.desktop for the taskbar to show the icon
+GLib.set_prgname('dev.sonar')
 # native popups (dropdown lists) use the GTK theme, not page CSS; Breeze ignores prefer-dark, so force the dark variant
 Gtk.Settings.get_default().set_property('gtk-theme-name', 'Breeze-Dark')
 Gtk.Window.set_default_icon_name('sonar')

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install Sonar for the current user: backend service (starts at login), launchers (Meta+S overlay),
-# icon. Re-run after moving the repo. The udev rule for the hardware ChatMix dial needs root: see the end.
+# icon, tray icon at login. Re-run after moving the repo. The udev rule for the hardware ChatMix dial needs root: see the end.
 set -e
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 APPS=$HOME/.local/share/applications
@@ -25,6 +25,9 @@ for f in dev.sonar.desktop dev.sonar.overlay.desktop; do
 	sed "s#@REPO@#$REPO#g" "$REPO/install/$f" > "$APPS/$f"
 done
 cp "$REPO/sonar.png" "$HOME/.local/share/icons/hicolor/256x256/apps/sonar.png"
+# the window process, hidden, so the tray icon is there from login
+mkdir -p "$HOME/.config/autostart"
+sed "s#@REPO@#$REPO#g" "$REPO/install/dev.sonar.autostart.desktop" > "$HOME/.config/autostart/dev.sonar.desktop"
 
 systemctl --user daemon-reload
 systemctl --user enable sonar.service
