@@ -1,10 +1,10 @@
 package dev.sonar.pipewire;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.ProcessBuilder.Redirect;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,11 +19,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
-import javax.sound.sampled.AudioFileFormat;
-import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -135,14 +130,23 @@ public class PipeWireService {
 			});
 			byte[] pcm = p.getInputStream().readNBytes(seconds * 48000 * 2);
 			p.destroy();
-			AudioFormat format = new AudioFormat(48000, 16, 1, true, false);
-			ByteArrayOutputStream wav = new ByteArrayOutputStream();
-			AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(pcm), format, pcm.length / 2),
-					AudioFileFormat.Type.WAVE, wav);
-			return wav.toByteArray();
+			return wav(pcm, 48000);
 		} catch (IOException e) {
 			throw new UncheckedIOException("Can't record " + source, e);
 		}
+	}
+
+	/**
+	 * 16-bit mono PCM wrapped in a WAV header. Hand-written, not javax.sound's AudioSystem: that finds
+	 * its writers by service lookup and drags AWT into the native image.
+	 */
+	static byte[] wav(byte[] pcm, int rate) {
+		ByteBuffer b = ByteBuffer.allocate(44 + pcm.length).order(ByteOrder.LITTLE_ENDIAN);
+		b.put("RIFF".getBytes(StandardCharsets.US_ASCII)).putInt(36 + pcm.length).put("WAVE".getBytes(StandardCharsets.US_ASCII));
+		b.put("fmt ".getBytes(StandardCharsets.US_ASCII)).putInt(16).putShort((short) 1).putShort((short) 1) // PCM, mono
+				.putInt(rate).putInt(rate * 2).putShort((short) 2).putShort((short) 16); // byte rate, block align, bits
+		b.put("data".getBytes(StandardCharsets.US_ASCII)).putInt(pcm.length).put(pcm);
+		return b.array();
 	}
 
 	public void unloadModule(long id) {

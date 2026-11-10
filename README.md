@@ -75,6 +75,21 @@ path and stopped the same way.
 
 - Linux with PipeWire + `pipewire-pulse` (provides `pactl`) and `pw-cli`/`pw-link`.
 - Java 21. No Maven install needed — the wrapper (`./mvnw`) is checked in.
+- Optional: **GraalVM 25** for a native binary (see below). Unpack the
+  [Community Edition](https://github.com/graalvm/graalvm-ce-builds/releases) into
+  `~/.local/opt/graalvm-25`, or point `GRAALVM_HOME` at it.
+
+### Native binary (GraalVM)
+
+With GraalVM 25 found, `install/install.sh` and `install/update.sh` build `target/sonar`, a native
+executable, and the service runs that instead of the jar: it starts in well under a second and uses
+a fraction of the JVM's memory. The build itself takes a few minutes and several GB of RAM. By hand:
+
+```sh
+GRAALVM_HOME=~/.local/opt/graalvm-25 JAVA_HOME=~/.local/opt/graalvm-25 ./mvnw -Pnative package native:compile
+```
+
+Without GraalVM everything works as before, on the JVM.
 
 ### Desktop window & overlay
 
@@ -125,10 +140,10 @@ it from UPower, the same source as the desktop's Bluetooth applet.
 install/install.sh
 ```
 
-Sets Sonar up for your user: the backend as a systemd user service that starts at login (with a
-small-app JVM: 128 MiB heap, serial GC), the **Sonar** launcher, the **Meta+S** overlay hotkey (change it
-in Sonar's Preferences on KDE),
-and the icon. It builds `target/sonar.jar` first if needed, and fills in the repo's location, so
+Sets Sonar up for your user: the backend as a systemd user service that starts at login (the native
+binary with GraalVM, else a small-app JVM: 128 MiB heap, serial GC), the **Sonar** launcher, the
+**Meta+S** overlay hotkey (change it in Sonar's Preferences on KDE),
+and the icon. It builds `target/sonar` or `target/sonar.jar` first if needed, and fills in the repo's location, so
 re-run it after moving the repo. The files it installs are templates in `install/`.
 
 Updating: `install/update.sh` pulls, rebuilds (tests included) and restarts the backend; if the build

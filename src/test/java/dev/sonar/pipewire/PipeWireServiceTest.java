@@ -1,19 +1,37 @@
 package dev.sonar.pipewire;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+import javax.sound.sampled.AudioFileFormat;
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
 
 import org.junit.jupiter.api.Test;
 
 import dev.sonar.domain.EqBand;
 
 class PipeWireServiceTest {
+
+	@Test
+	void wavMatchesJavaSound() throws Exception {
+		byte[] pcm = { 1, 2, 3, 4, -5, -6 };
+		ByteArrayOutputStream expected = new ByteArrayOutputStream();
+		AudioSystem.write(new AudioInputStream(new ByteArrayInputStream(pcm), new AudioFormat(48000, 16, 1, true, false), 3),
+				AudioFileFormat.Type.WAVE, expected);
+
+		assertArrayEquals(expected.toByteArray(), PipeWireService.wav(pcm, 48000));
+	}
 
 	@Test
 	void quoteEscapesQuotesAndBackslashes() {

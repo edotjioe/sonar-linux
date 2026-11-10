@@ -6,18 +6,14 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 APPS=$HOME/.local/share/applications
 UNITS=$HOME/.config/systemd/user
 
-# Java 21: $JAVA_HOME, else the one on PATH, else a JDK unpacked in ~/.local/share/jdk-21 (e.g. on Bazzite)
-JAVA=${JAVA_HOME:+$JAVA_HOME/bin/java}
-[ -x "$JAVA" ] || JAVA=$(command -v java || true)
-[ -x "$JAVA" ] || JAVA=$HOME/.local/share/jdk-21/bin/java
-[ -x "$JAVA" ] || { echo "Java 21 not found: set JAVA_HOME, or unpack a JDK into ~/.local/share/jdk-21" >&2; exit 1; }
-export JAVA_HOME=${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$JAVA")")")}  # for ./mvnw
+# native binary with GraalVM, else the jar on Java 21
+. "$REPO/install/toolchain.sh"
 
-[ -f "$REPO/target/sonar.jar" ] || (cd "$REPO" && ./mvnw -q package -DskipTests)
+[ -f "$REPO/$ARTIFACT" ] || (cd "$REPO" && $BUILD -DskipTests)
 
 mkdir -p "$UNITS" "$APPS" "$HOME/.local/share/icons/hicolor/256x256/apps"
 # the templates say @REPO@ wherever the repo's path goes
-sed -e "s#@REPO@#$REPO#g" -e "s#@JAVA@#$JAVA#g" "$REPO/install/sonar.service" > "$UNITS/sonar.service"
+sed -e "s#@REPO@#$REPO#g" -e "s#@EXEC@#$EXEC#g" "$REPO/install/sonar.service" > "$UNITS/sonar.service"
 # auto-update: installed but left as it was (off until switched on in Sonar's Preferences)
 sed "s#@REPO@#$REPO#g" "$REPO/install/sonar-update.service" > "$UNITS/sonar-update.service"
 cp "$REPO/install/sonar-update.timer" "$UNITS/sonar-update.timer"

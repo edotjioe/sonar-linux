@@ -83,6 +83,11 @@
 					</execution>
 				</executions>
 			</plugin>
+			<!-- native binary, target/sonar: ./mvnw -Pnative package native:compile, with GRAALVM_HOME set -->
+			<plugin>
+				<groupId>org.graalvm.buildtools</groupId>
+				<artifactId>native-maven-plugin</artifactId>
+			</plugin>
 		</plugins>
 	</build>
 
