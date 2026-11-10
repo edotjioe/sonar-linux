@@ -6,7 +6,8 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: jdbc:h2:file:./data/sonar;AUTO_SERVER=TRUE
+    # no AUTO_SERVER: that opens an H2 TCP server (user sa, no password) on every interface
+    url: jdbc:h2:file:./data/sonar
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
@@ -27,6 +28,8 @@ spring:
       path: /h2-console
 
 server:
+  # localhost only: the API controls audio and OBS (recording, screenshots) and has no auth
+  address: 127.0.0.1
   port: 8080
 
 sonar:
