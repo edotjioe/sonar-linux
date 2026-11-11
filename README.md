@@ -6,13 +6,17 @@ mute, and routes each channel to a physical output — all in software, on top o
 
 Built as a **Java / Spring Boot** learning project.
 
+> **Development has moved to [edotjioe/sonar-rs](https://github.com/edotjioe/sonar-rs)**, the same Sonar
+> with its backend in Rust (~1 MB of memory instead of ~49 MB). New features land there; this Java version
+> stays as it is at v0.1.23.
+
 ![Sonar demo: the mixer with its OBS side panel, in overlay mode](docs/demo.webp)
 
 ## Rust version
 
 The backend has also been ported to Rust: **[edotjioe/sonar-rs](https://github.com/edotjioe/sonar-rs)**.
-It has the same features and HTTP API, and it uses this repo's UI (mixer page, overlay, tray) unchanged.
-Install either one: the two services can't run at the same time.
+It has the same features and HTTP API, and it's standalone: it carries its own copy of the UI (mixer page,
+overlay, tray) and its own install script. Install either one: the two services can't run at the same time.
 
 Measured on the same PC (2026-11-11), from `/proc/<pid>/smaps_rollup`: Java as the running service,
 Rust with the base station, 5 level meters and OBS connected and the mixer and OBS pages polling, so
