@@ -2,8 +2,9 @@
 # Sonar windows (WebKitGTK, no browser chrome). One running instance serves both:
 #   sonar-window.py           -> the normal mixer window
 #   sonar-window.py --toggle  -> show/hide the full-screen overlay (bound to a global hotkey)
-#   sonar-window.py --tray    -> just the tray icon (autostarted at login)
+#   sonar-window.py --tray    -> the tray icon (autostarted at login): its own small process, without WebKit
 # The mixer's OBS button (window.open) opens the OBS page in its own window.
+# The window process quits a minute after nothing is showing: idle WebKit holds ~150 MiB.
 import json
 import os
 import sys
@@ -12,25 +13,30 @@ import urllib.request
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-gi.require_version('WebKit2', '4.1')
-from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2
-try:
-    gi.require_version('GtkLayerShell', '0.1')
-    from gi.repository import GtkLayerShell
-except (ValueError, ImportError):
-    GtkLayerShell = None  # not installed (e.g. stock Bazzite): the overlay falls back to a plain fullscreen window
-AppIndicator = None  # tray icon (StatusNotifierItem): Ayatana or the older libappindicator, whichever is installed
-for name in ('AyatanaAppIndicator3', 'AppIndicator3'):
+from gi.repository import Gdk, Gio, GLib, Gtk
+TRAY = '--tray' in sys.argv[1:]
+if TRAY:
+    AppIndicator = None  # tray icon (StatusNotifierItem): Ayatana or the older libappindicator, whichever is installed
+    for name in ('AyatanaAppIndicator3', 'AppIndicator3'):
+        try:
+            gi.require_version(name, '0.1')
+            AppIndicator = __import__('gi.repository.' + name, fromlist=[name])
+            break
+        except (ValueError, ImportError):
+            pass
+else:
+    gi.require_version('WebKit2', '4.1')
+    from gi.repository import WebKit2
     try:
-        gi.require_version(name, '0.1')
-        AppIndicator = __import__('gi.repository.' + name, fromlist=[name])
-        break
+        gi.require_version('GtkLayerShell', '0.1')
+        from gi.repository import GtkLayerShell
     except (ValueError, ImportError):
-        pass
+        GtkLayerShell = None  # not installed (e.g. stock Bazzite): the overlay falls back to a plain fullscreen window
 
 URL = 'http://localhost:8080/'
 OVERLAY_URL = URL + '?overlay=1'
 SCRIPT = os.path.abspath(__file__)
+IDLE_QUIT_S = 60  # keep the window process this long after the last window closes: reopening stays instant
 
 
 def script_mtime():
@@ -63,36 +69,58 @@ def web_view():
     return view
 
 
-class Sonar(Gtk.Application):
-    def __init__(self):
-        super().__init__(application_id='dev.sonar', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
-        self.main = self.overlay = self.overlay_view = self.obs = None
-        self.layer_shell = False  # the overlay is a layer-shell surface (its keyboard mode can change)
-        self.started_mtime = script_mtime()  # this file as loaded; see restart_if_updated
+class Tray(Gtk.Application):
+    """Just the tray icon; its menu launches this script, so the windows run (and quit) in their own process."""
 
-    def do_startup(self):
-        Gtk.Application.do_startup(self)
+    def __init__(self):
+        super().__init__(application_id='dev.sonar.tray')
+
+    def do_activate(self):
         if not AppIndicator:
-            return
-        self.hold()  # the tray icon keeps this process alive with no window open
+            return  # no tray library: nothing to show, so don't linger
+        self.hold()
         menu = Gtk.Menu()
-        for label, action in (('Open Sonar', self.show_main), ('Overlay', self.toggle_overlay), ('Quit', self.quit)):
+        for label, args in (('Open Sonar', []), ('Overlay', ['--toggle'])):
             item = Gtk.MenuItem(label=label)
-            item.connect('activate', lambda _item, act=action: act())
+            item.connect('activate', lambda _item, a=args: Gio.Subprocess.new([sys.executable, SCRIPT, *a], Gio.SubprocessFlags.NONE))
             menu.append(item)
+        item = Gtk.MenuItem(label='Quit')
+        item.connect('activate', lambda _item: self.quit())
+        menu.append(item)
         menu.show_all()
         self.tray = AppIndicator.Indicator.new('dev.sonar', 'sonar', AppIndicator.IndicatorCategory.APPLICATION_STATUS)
         self.tray.set_title('Sonar')
         self.tray.set_menu(menu)
         self.tray.set_status(AppIndicator.IndicatorStatus.ACTIVE)
 
+
+class Sonar(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id='dev.sonar', flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        self.main = self.overlay = self.overlay_view = self.obs = None
+        self.layer_shell = False  # the overlay is a layer-shell surface (its keyboard mode can change)
+        self.started_mtime = script_mtime()  # this file as loaded; see restart_if_updated
+        self.idle_timer = None
+
+    def showing(self):
+        return bool(self.main or self.obs or (self.overlay and self.overlay.get_visible()))
+
+    def schedule_idle_quit(self, *_):
+        """Nothing on screen: quit in a minute, unless a window opens meanwhile (then this is called again)."""
+        if self.idle_timer:
+            GLib.source_remove(self.idle_timer)
+        def quit_if_idle():
+            self.idle_timer = None
+            if not self.showing():
+                self.quit()
+            return False
+        self.idle_timer = GLib.timeout_add_seconds(IDLE_QUIT_S, quit_if_idle)
+
     def do_command_line(self, cmdline):
         # a second launch doesn't start a new process: its arguments arrive here, in the running one
         if self.restart_if_updated(cmdline.get_arguments()[1:]):
             return 0
-        if '--tray' in cmdline.get_arguments()[1:]:
-            pass  # do_startup already put up the tray icon
-        elif '--toggle' in cmdline.get_arguments()[1:]:
+        if '--toggle' in cmdline.get_arguments()[1:]:
             if hotkey_opens() == 'window':
                 self.toggle_main()
             else:
@@ -110,7 +138,7 @@ class Sonar(Gtk.Application):
         mtime = script_mtime()
         if mtime is None or mtime == self.started_mtime:
             return False
-        if self.main or self.obs or (self.overlay and self.overlay.get_visible()):
+        if self.showing():
             return False  # don't close what's on screen; restart on a later launch
         def exec_new():
             # let the launching process get its reply first; exec closes our D-Bus connection, which
@@ -130,7 +158,7 @@ class Sonar(Gtk.Application):
             view.connect('create', self.open_obs)
             view.load_uri(URL)
             self.main.add(view)
-            self.main.connect('destroy', lambda *_: setattr(self, 'main', None))
+            self.main.connect('destroy', lambda *_: (setattr(self, 'main', None), self.schedule_idle_quit()))
             self.main.show_all()
         self.main.present()
 
@@ -147,7 +175,7 @@ class Sonar(Gtk.Application):
         win.add(child)
         child.connect('ready-to-show', lambda *_: win.show_all())
         child.connect('close', lambda *_: win.destroy())  # window.close()
-        win.connect('destroy', lambda *_: setattr(self, 'obs', None))
+        win.connect('destroy', lambda *_: (setattr(self, 'obs', None), self.schedule_idle_quit()))
         self.obs = win
         return child
 
@@ -191,10 +219,11 @@ class Sonar(Gtk.Application):
             self.overlay.remove(self.overlay_view)
             self.overlay_view.destroy()
             self.overlay_view = None
+        self.schedule_idle_quit()
 
     def make_overlay(self):
-        # the hidden overlay window keeps this process alive (no Python/GTK cold start on the next toggle);
-        # its page is created on show and destroyed on hide
+        # the hidden overlay window keeps this process alive for IDLE_QUIT_S (no Python/GTK cold start on a
+        # quick re-toggle); its page is created on show and destroyed on hide
         win = Gtk.Window(application=self, title='Sonar overlay')
         if GtkLayerShell and GtkLayerShell.is_supported():
             # layer-shell (KDE, wlroots compositors): a layer above everything, fullscreen games included
@@ -233,4 +262,5 @@ GLib.set_prgname('dev.sonar')
 # native popups (dropdown lists) use the GTK theme, not page CSS; Breeze ignores prefer-dark, so force the dark variant
 Gtk.Settings.get_default().set_property('gtk-theme-name', 'Breeze-Dark')
 Gtk.Window.set_default_icon_name('sonar')
-Sonar().run(sys.argv)
+# the tray takes no options: GApplication would reject --tray
+Tray().run(sys.argv[:1]) if TRAY else Sonar().run(sys.argv)
