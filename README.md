@@ -8,6 +8,37 @@ Built as a **Java / Spring Boot** learning project.
 
 ![Sonar demo: the mixer with its OBS side panel, in overlay mode](docs/demo.webp)
 
+## Rust version
+
+The backend has also been ported to Rust: **[edotjioe/sonar-rs](https://github.com/edotjioe/sonar-rs)**.
+It has the same features and HTTP API, and it uses this repo's UI (mixer page, overlay, tray) unchanged.
+Install either one: the two services can't run at the same time.
+
+Measured on the same PC (2026-11-11), from `/proc/<pid>/smaps_rollup`: Java as the running service,
+Rust with the base station, 5 level meters and OBS connected and the mixer and OBS pages polling, so
+under at least as much load.
+
+|                                  | Java (GraalVM native) | Rust      |
+|----------------------------------|-----------------------|-----------|
+| Private memory (`Pss_Anon`)      | 48.7 MB               | 1.2 MB    |
+| Resident memory (RSS)            | 176 MB                | 5.0 MB    |
+| Executable                       | 188 MB                | 1.05 MB   |
+| Clean release build              | ~1¼ min, 7.6 GB peak  | ~10 s     |
+
+The backend is only part of what Sonar runs. Everything else is the same with either backend, so for
+the whole picture (private memory, `Pss_Anon`; RSS would count shared libraries several times over):
+
+|                                           | with Java | with Rust |
+|-------------------------------------------|-----------|-----------|
+| Backend                                   | 48.7 MB   | 1.2 MB    |
+| EQ processes (`pipewire`, 4 channels)     | 15.9 MB   | 15.9 MB   |
+| Tray icon (`sonar-window.py --tray`)      | 24.4 MB   | 24.4 MB   |
+| **Total, overlay closed**                 | **89.0 MB** | **41.5 MB** |
+| Overlay while open (window + WebKit)      | +173.7 MB | +173.7 MB |
+| **Total, overlay open**                   | **262.7 MB** | **215.2 MB** |
+
+The overlay's WebKit processes (window 90.8 MB, page 61.6 MB, network 21.3 MB) quit 60 s after it closes.
+
 ## Features (implemented)
 
 - **Channels** — Game, Chat, Media and Aux are created automatically as virtual devices
