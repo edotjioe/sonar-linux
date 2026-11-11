@@ -25,7 +25,19 @@ under at least as much load.
 | Executable                       | 188 MB                | 1.05 MB   |
 | Clean release build              | ~1¼ min, 7.6 GB peak  | ~10 s     |
 
-The EQ `pipewire` processes (~64 MB for four channels) and the overlay are the same in both.
+The backend is only part of what Sonar runs. Everything else is the same with either backend, so for
+the whole picture (private memory, `Pss_Anon`; RSS would count shared libraries several times over):
+
+|                                           | with Java | with Rust |
+|-------------------------------------------|-----------|-----------|
+| Backend                                   | 48.7 MB   | 1.2 MB    |
+| EQ processes (`pipewire`, 4 channels)     | 15.9 MB   | 15.9 MB   |
+| Tray icon (`sonar-window.py --tray`)      | 24.4 MB   | 24.4 MB   |
+| **Total, overlay closed**                 | **89.0 MB** | **41.5 MB** |
+| Overlay while open (window + WebKit)      | +173.7 MB | +173.7 MB |
+| **Total, overlay open**                   | **262.7 MB** | **215.2 MB** |
+
+The overlay's WebKit processes (window 90.8 MB, page 61.6 MB, network 21.3 MB) quit 60 s after it closes.
 
 ## Features (implemented)
 
