@@ -8,6 +8,25 @@ Built as a **Java / Spring Boot** learning project.
 
 ![Sonar demo: the mixer with its OBS side panel, in overlay mode](docs/demo.webp)
 
+## Rust version
+
+The backend has also been ported to Rust: **[edotjioe/sonar-rs](https://github.com/edotjioe/sonar-rs)**.
+It has the same features and HTTP API, and it uses this repo's UI (mixer page, overlay, tray) unchanged.
+Install either one: the two services can't run at the same time.
+
+Measured on the same PC (2026-11-11), from `/proc/<pid>/smaps_rollup`: Java as the running service,
+Rust with the base station, 5 level meters and OBS connected and the mixer and OBS pages polling, so
+under at least as much load.
+
+|                                  | Java (GraalVM native) | Rust      |
+|----------------------------------|-----------------------|-----------|
+| Private memory (`Pss_Anon`)      | 48.7 MB               | 1.2 MB    |
+| Resident memory (RSS)            | 176 MB                | 5.0 MB    |
+| Executable                       | 188 MB                | 1.05 MB   |
+| Clean release build              | ~1¼ min, 7.6 GB peak  | ~10 s     |
+
+The EQ `pipewire` processes (~64 MB for four channels) and the overlay are the same in both.
+
 ## Features (implemented)
 
 - **Channels** — Game, Chat, Media and Aux are created automatically as virtual devices
